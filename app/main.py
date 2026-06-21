@@ -668,6 +668,7 @@ function syncSelectedSwitches() {{
 
   document.querySelectorAll("a[href]").forEach(function (link) {{
     if (link.classList.contains("switch-clear")) return;
+    if (link.closest && link.closest("#switchSidebar")) return;
 
     var href = link.getAttribute("href") || "";
     if (href.indexOf("/") !== 0) return;
