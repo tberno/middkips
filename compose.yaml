@@ -1,0 +1,17 @@
+services:
+  its-portal:
+    build: .
+    container_name: middits-its-portal
+    network_mode: "host"
+    env_file:
+      - /opt/docker-stacks/nms-stack/.env
+    environment:
+      PORTAL_NAME: "Middlebury ITS Network Portal"
+      APP_PORT: "8050"
+      LIBRENMS_DB_HOST: "127.0.0.1"
+      LIBRENMS_DB_PORT: "3306"
+      LIBRENMS_DB_NAME: "librenms"
+      LIBRENMS_DB_USER: "librenms"
+      LIBRENMS_BASE_URL: "https://nms.jestertek.cc"
+      OXIDIZED_BASE_URL: "https://nms.jestertek.cc/oxidized"
+    restart: unless-stopped

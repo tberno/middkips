@@ -15,7 +15,9 @@ OXIDIZED_BASE_URL = os.getenv("OXIDIZED_BASE_URL", "https://nms.jestertek.cc/oxi
 
 
 def h(value: Any) -> str:
-    return html.escape(str(value or ""))
+    if value is None:
+        return ""
+    return html.escape(str(value))
 
 
 def fmt_ip(value: Any) -> str:
@@ -566,6 +568,33 @@ def layout(title: str, body: str) -> str:
       color:var(--link);
     }}
 
+  
+    .switch-filter {{
+      background:var(--input-bg);
+      border:1px solid var(--border);
+      border-radius:3px;
+      color:var(--input-text);
+      font-size:12px;
+      margin-bottom:4px;
+      min-width:0;
+      padding:4px 6px;
+      width:100%;
+    }}
+    .switch-divider {{
+      color:var(--muted);
+      font-size:10px;
+      font-weight:700;
+      margin:5px 2px 2px;
+      text-transform:uppercase;
+    }}
+
+  
+    /* In AKIPS two-column mode, device identity lives in the left selector */
+    .switch-main table.report th:first-child,
+    .switch-main table.report td:first-child {{
+      display:none;
+    }}
+
   </style>
 </head>
 <body>
@@ -590,6 +619,14 @@ def layout(title: str, body: str) -> str:
 </header>
 <main>{body}</main>
 <script>
+
+function filterSwitches(value) {{
+  var needle = String(value || "").toLowerCase();
+  document.querySelectorAll("[data-switch-search]").forEach(function (row) {{
+    var haystack = row.getAttribute("data-switch-search") || "";
+    row.style.display = haystack.indexOf(needle) >= 0 ? "" : "none";
+  }});
+}}
 
 function saveSwitchScroll() {{
   var el = document.getElementById("switchSidebar");
@@ -699,7 +736,9 @@ def device_catalog() -> list[dict[str, Any]]:
 def switch_selector(current_path: str, selected_ids: list[int], q: str = "") -> str:
     rows = device_catalog()
 
-    items = ""
+    selected_items = ""
+    other_items = ""
+
     for row in rows:
         try:
             device_id = int(row.get("device_id") or 0)
@@ -717,14 +756,31 @@ def switch_selector(current_path: str, selected_ids: list[int], q: str = "") -> 
             cls = "switch-row"
 
         name = device_label(row)
+        search_text = " ".join([
+            str(name or ""),
+            str(row.get("hostname") or ""),
+            str(row.get("sysName") or ""),
+            str(row.get("os") or ""),
+            str(row.get("hardware") or ""),
+            str(row.get("ip_addr") or ""),
+        ]).lower()
 
-        items += f"""
-        <a class="{cls}" href="{current_path}{qs(q, next_ids)}" onclick="saveSwitchScroll()">
+        item = f"""
+        <a class="{cls}" href="{current_path}{qs(q, next_ids)}" onclick="saveSwitchScroll()" data-switch-search="{h(search_text)}">
           <span>{h(name)}</span>
         </a>
         """
 
+        if selected:
+            selected_items += item
+        else:
+            other_items += item
+
     clear_url = current_path + qs(q, [])
+
+    divider = ""
+    if selected_items and other_items:
+        divider = '<div class="switch-divider">available</div>'
 
     return f"""
     <aside class="switch-sidebar" id="switchSidebar">
@@ -732,8 +788,9 @@ def switch_selector(current_path: str, selected_ids: list[int], q: str = "") -> 
         <strong>Switches</strong>
         <span>{len(selected_ids)} selected</span>
       </div>
+      <input class="switch-filter" id="switchFilter" placeholder="filter switches" oninput="filterSwitches(this.value)">
       <a class="switch-clear" href="{clear_url}" onclick="saveSwitchScroll()">clear</a>
-      <div class="switch-list">{items}</div>
+      <div class="switch-list">{selected_items}{divider}{other_items}</div>
     </aside>
     """
 
