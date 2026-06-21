@@ -858,6 +858,15 @@ def hidden_device_ids(selected_ids: list[int]) -> str:
 
 app = FastAPI(title=APP_NAME)
 
+@app.get("/healthz")
+def healthz():
+    try:
+        row = fetch_one("SELECT 1 AS ok")
+        return {"status": "ok", "database": bool(row.get("ok"))}
+    except Exception as exc:
+        return {"status": "error", "database": False, "error": str(exc)}
+
+
 
 @app.get("/", response_class=HTMLResponse)
 def home():
