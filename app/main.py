@@ -639,6 +639,55 @@ document.addEventListener("DOMContentLoaded", function () {{
   if (el && saved !== null) el.scrollTop = parseInt(saved, 10) || 0;
 }});
 
+function isSelectionPath(path) {{
+  return path === "/devices" || path.indexOf("/reports/") === 0;
+}}
+
+function clearSelectedSwitches() {{
+  sessionStorage.removeItem("middkipsSelectedDeviceIds");
+  saveSwitchScroll();
+}}
+
+function syncSelectedSwitches() {{
+  var url = new URL(window.location.href);
+  var path = url.pathname;
+  var ids = url.searchParams.get("device_ids");
+
+  if (ids && ids.trim() !== "") {{
+    sessionStorage.setItem("middkipsSelectedDeviceIds", ids);
+  }} else if (isSelectionPath(path)) {{
+    var saved = sessionStorage.getItem("middkipsSelectedDeviceIds");
+    if (saved && saved.trim() !== "") {{
+      url.searchParams.set("device_ids", saved);
+      window.location.replace(url.toString());
+      return;
+    }}
+  }}
+
+  var activeIds = url.searchParams.get("device_ids") || sessionStorage.getItem("middkipsSelectedDeviceIds") || "";
+
+  document.querySelectorAll("a[href]").forEach(function (link) {{
+    if (link.classList.contains("switch-clear")) return;
+
+    var href = link.getAttribute("href") || "";
+    if (href.indexOf("/") !== 0) return;
+
+    var linkUrl = new URL(href, window.location.origin);
+
+    if (!isSelectionPath(linkUrl.pathname)) return;
+
+    if (activeIds && activeIds.trim() !== "") {{
+      linkUrl.searchParams.set("device_ids", activeIds);
+    }} else {{
+      linkUrl.searchParams.delete("device_ids");
+    }}
+
+    link.setAttribute("href", linkUrl.pathname + linkUrl.search + linkUrl.hash);
+  }});
+}}
+
+document.addEventListener("DOMContentLoaded", syncSelectedSwitches);
+
 function setThemeButtonLabel() {{
   var current = document.documentElement.getAttribute("data-theme") || "dark";
   var button = document.getElementById("themeToggle");
@@ -789,7 +838,7 @@ def switch_selector(current_path: str, selected_ids: list[int], q: str = "") -> 
         <span>{len(selected_ids)} selected</span>
       </div>
       <input class="switch-filter" id="switchFilter" placeholder="filter switches" oninput="filterSwitches(this.value)">
-      <a class="switch-clear" href="{clear_url}" onclick="saveSwitchScroll()">clear</a>
+      <a class="switch-clear" href="{clear_url}" onclick="clearSelectedSwitches()">clear</a>
       <div class="switch-list">{selected_items}{divider}{other_items}</div>
     </aside>
     """
@@ -1241,17 +1290,41 @@ def mac_table(q: str = "", device_ids: str = "", limit: int = 250):
     return layout("MAC Table", two_col("/reports/mac-table", selected_ids, q, body))
 
 
+
 @app.get("/reports/arp-ip", response_class=HTMLResponse)
-def arp_ip(q: str = "", limit: int = 250):
+def arp_ip(q: str = "", device_ids: str = "", limit: int = 250):
+    q = (q or "").strip()
+    selected_ids = selected_device_ids(device_ids)
+
     params: list[Any] = []
-    where = ""
+    where_parts: list[str] = []
+
+    add_device_filter(where_parts, params, selected_ids, "d")
+
     if q:
         qmac = q.replace(":", "").replace("-", "").replace(".", "")
-        where = "WHERE d.hostname LIKE %s OR p.ifName LIKE %s OR m.mac_address LIKE %s OR m.ipv4_address LIKE %s"
+        where_parts.append("""
+            (
+              COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) LIKE %s
+              OR p.ifName LIKE %s
+              OR m.mac_address LIKE %s
+              OR m.ipv4_address LIKE %s
+            )
+        """)
         params.extend([f"%{q}%", f"%{q}%", f"%{qmac}%", f"%{q}%"])
+
+    where = "WHERE " + " AND ".join(where_parts) if where_parts else ""
     params.append(limit)
+
     rows = safe_query(f"""
-        SELECT COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device, COALESCE(m.device_id, p.device_id) AS device_id, p.port_id, p.ifName, m.mac_address, m.ipv4_address, m.context_name
+        SELECT
+            COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device,
+            COALESCE(m.device_id, p.device_id) AS device_id,
+            p.port_id,
+            p.ifName,
+            m.mac_address,
+            m.ipv4_address,
+            m.context_name
         FROM ipv4_mac m
         LEFT JOIN ports p ON p.port_id = m.port_id
         LEFT JOIN devices d ON d.device_id = COALESCE(m.device_id, p.device_id)
@@ -1259,83 +1332,285 @@ def arp_ip(q: str = "", limit: int = 250):
         ORDER BY d.hostname, p.ifName, m.ipv4_address
         LIMIT %s
     """, tuple(params))
+
     trs = ""
     for row in rows:
-        trs += f"<tr><td>{device_anchor(row)}</td><td>{h(row.get('ipv4_address'))}</td><td>{h(fmt_mac(row.get('mac_address')))}</td><td>{interface_anchor(row)}</td><td>{h(row.get('context_name'))}</td></tr>"
-    return layout("ARP/IP", f"<section class='panel'><h1 class='center'>ARP/IP</h1>{table(['Device','IPv4 Address','MAC Address','Port','Context'], trs)}</section>")
+        trs += f"""
+        <tr>
+          <td>{device_anchor(row)}</td>
+          <td>{h(row.get('ipv4_address'))}</td>
+          <td>{h(fmt_mac(row.get('mac_address')))}</td>
+          <td>{interface_anchor(row)}</td>
+          <td>{h(row.get('context_name'))}</td>
+        </tr>"""
+
+    clear_href = "/reports/arp-ip"
+    if selected_ids:
+        clear_href += "?device_ids=" + h(ids_csv(selected_ids))
+
+    body = f"""
+<section class="panel">
+  <h1 class="center">ARP/IP</h1>
+  <div class="subtitle">Top {len(rows)} of {len(rows)}</div>
+
+  <form class="toolbar" method="get">
+    {hidden_device_ids(selected_ids)}
+    <input name="q" value="{h(q)}" placeholder="Filter selected switches, IP, MAC, interface">
+    <button>Search</button>
+    <a class="button" href="{clear_href}">Clear</a>
+  </form>
+
+  {table(["Device", "IPv4 Address", "MAC Address", "Port", "Context"], trs)}
+</section>
+"""
+    return layout("ARP/IP", two_col("/reports/arp-ip", selected_ids, q, body))
+
 
 
 @app.get("/reports/vlans", response_class=HTMLResponse)
-def vlans(q: str = "", limit: int = 250):
+def vlans(q: str = "", device_ids: str = "", limit: int = 250):
+    q = (q or "").strip()
+    selected_ids = selected_device_ids(device_ids)
+
     params: list[Any] = []
-    where = "WHERE (p.ifName LIKE 'vlan%%' OR p.ifName LIKE 'br%%' OR p.ifDescr LIKE 'vlan%%' OR p.ifAlias LIKE 'vlan%%' OR p.ifVlan IS NOT NULL)"
+    where_parts: list[str] = [
+        "(p.ifName LIKE 'vlan%%' OR p.ifName LIKE 'br%%' OR p.ifDescr LIKE 'vlan%%' OR p.ifAlias LIKE 'vlan%%' OR p.ifVlan IS NOT NULL)"
+    ]
+
+    add_device_filter(where_parts, params, selected_ids, "d")
+
     if q:
-        where += " AND (d.hostname LIKE %s OR p.ifName LIKE %s OR p.ifAlias LIKE %s OR p.ifDescr LIKE %s OR p.ifVlan LIKE %s)"
+        where_parts.append("""
+            (
+              COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) LIKE %s
+              OR p.ifName LIKE %s
+              OR p.ifAlias LIKE %s
+              OR p.ifDescr LIKE %s
+              OR p.ifVlan LIKE %s
+            )
+        """)
         params.extend([f"%{q}%"] * 5)
+
+    where = "WHERE " + " AND ".join(where_parts)
     params.append(limit)
+
     rows = fetch_all(f"""
-        SELECT COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device, d.device_id, p.*, CASE
-            WHEN p.ifLastChange IS NULL OR p.ifLastChange = 0 OR d.uptime IS NULL OR d.last_polled IS NULL THEN NULL
-            ELSE DATE_SUB(d.last_polled, INTERVAL CAST(GREATEST(d.uptime - (p.ifLastChange / 100), 0) AS UNSIGNED) SECOND)
-        END AS ifLastChange_at, COALESCE(f.mac_count, 0) AS mac_count
+        SELECT
+            COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device,
+            d.device_id,
+            p.port_id,
+            p.ifName,
+            p.ifVlan,
+            p.ifOperStatus,
+            p.ifAdminStatus,
+            p.ifSpeed,
+            p.ifType,
+            p.ifAlias,
+            p.ifDescr,
+            COALESCE(f.mac_count, 0) AS mac_count
         FROM ports p
         JOIN devices d ON d.device_id = p.device_id
-        LEFT JOIN (SELECT port_id, COUNT(*) AS mac_count FROM ports_fdb GROUP BY port_id) f ON f.port_id = p.port_id
+        LEFT JOIN (
+            SELECT port_id, COUNT(*) AS mac_count
+            FROM ports_fdb
+            GROUP BY port_id
+        ) f ON f.port_id = p.port_id
         {where}
         ORDER BY d.hostname, p.ifName
         LIMIT %s
     """, tuple(params))
+
     trs = ""
     for row in rows:
-        trs += f"<tr><td>{device_anchor(row)}</td><td>{interface_anchor(row)}</td><td>{h(row.get('ifVlan'))}</td><td class='status-cell'>{status_badge(row.get('ifOperStatus'))}</td><td>{h(fmt_speed(row.get('ifSpeed')))}</td><td>{h(row.get('mac_count'))}</td><td>{h(row.get('ifAlias') or row.get('ifDescr'))}</td></tr>"
-    return layout("VLANs", f"<section class='panel'><h1 class='center'>VLANs</h1>{table(['Device','Interface','VLAN','Status','Speed','MACs','Title'], trs)}</section>")
+        trs += f"""
+        <tr>
+          <td>{device_anchor(row)}</td>
+          <td>{interface_anchor(row)}</td>
+          <td>{h(row.get('ifVlan'))}</td>
+          <td class="status-cell">{status_badge(row.get('ifOperStatus'))}</td>
+          <td class="status-cell">{status_badge(row.get('ifAdminStatus'))}</td>
+          <td>{h(fmt_speed(row.get('ifSpeed')))}</td>
+          <td>{h(row.get('mac_count'))}</td>
+          <td>{h(row.get('ifType'))}</td>
+          <td>{h(row.get('ifAlias') or row.get('ifDescr'))}</td>
+        </tr>"""
+
+    clear_href = "/reports/vlans"
+    if selected_ids:
+        clear_href += "?device_ids=" + h(ids_csv(selected_ids))
+
+    body = f"""
+<section class="panel">
+  <h1 class="center">VLANs</h1>
+  <div class="subtitle">Top {len(rows)} of {len(rows)}</div>
+
+  <form class="toolbar" method="get">
+    {hidden_device_ids(selected_ids)}
+    <input name="q" value="{h(q)}" placeholder="Filter selected switches, VLAN, interface, title">
+    <button>Search</button>
+    <a class="button" href="{clear_href}">Clear</a>
+  </form>
+
+  {table(["Device", "Interface", "VLAN", "Status", "Admin", "Speed", "MACs", "Type", "Title"], trs)}
+</section>
+"""
+    return layout("VLANs", two_col("/reports/vlans", selected_ids, q, body))
+
 
 
 @app.get("/reports/changes", response_class=HTMLResponse)
-def changes(q: str = "", limit: int = 250):
+def changes(q: str = "", device_ids: str = "", limit: int = 250):
+    q = (q or "").strip()
+    selected_ids = selected_device_ids(device_ids)
+
     params: list[Any] = []
-    where = "WHERE p.ifLastChange IS NOT NULL"
+    where_parts: list[str] = ["p.ifLastChange IS NOT NULL"]
+
+    add_device_filter(where_parts, params, selected_ids, "d")
+
     if q:
-        where += " AND (d.hostname LIKE %s OR p.ifName LIKE %s OR p.ifAlias LIKE %s OR p.ifDescr LIKE %s)"
+        where_parts.append("""
+            (
+              COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) LIKE %s
+              OR p.ifName LIKE %s
+              OR p.ifAlias LIKE %s
+              OR p.ifDescr LIKE %s
+            )
+        """)
         params.extend([f"%{q}%"] * 4)
+
+    where = "WHERE " + " AND ".join(where_parts)
     params.append(limit)
+
     rows = fetch_all(f"""
-        SELECT COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device, d.device_id, p.port_id, p.ifName, p.ifOperStatus, p.ifAdminStatus, CASE
-            WHEN p.ifLastChange IS NULL OR p.ifLastChange = 0 OR d.uptime IS NULL OR d.last_polled IS NULL THEN NULL
-            ELSE DATE_SUB(d.last_polled, INTERVAL CAST(GREATEST(d.uptime - (p.ifLastChange / 100), 0) AS UNSIGNED) SECOND)
-        END AS ifLastChange_at, p.ifSpeed, p.ifAlias, p.ifDescr
+        SELECT
+            COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device,
+            d.device_id,
+            p.port_id,
+            p.ifName,
+            p.ifOperStatus,
+            p.ifAdminStatus,
+            CASE
+                WHEN p.ifLastChange IS NULL OR p.ifLastChange = 0 OR d.uptime IS NULL OR d.last_polled IS NULL THEN NULL
+                ELSE DATE_SUB(d.last_polled, INTERVAL CAST(GREATEST(d.uptime - (p.ifLastChange / 100), 0) AS UNSIGNED) SECOND)
+            END AS ifLastChange_at,
+            p.ifSpeed,
+            p.ifAlias,
+            p.ifDescr
         FROM ports p
         JOIN devices d ON d.device_id = p.device_id
         {where}
-        ORDER BY p.ifLastChange DESC
+        ORDER BY ifLastChange_at DESC
         LIMIT %s
     """, tuple(params))
+
     trs = ""
     for row in rows:
-        trs += f"<tr><td>{device_anchor(row)}</td><td>{interface_anchor(row)}</td><td class='status-cell'>{status_badge(row.get('ifOperStatus'))}</td><td class='status-cell'>{status_badge(row.get('ifAdminStatus'))}</td><td>{h(row.get('ifLastChange_at'))}</td><td>{h(fmt_speed(row.get('ifSpeed')))}</td><td>{h(row.get('ifAlias') or row.get('ifDescr'))}</td></tr>"
-    return layout("Changes", f"<section class='panel'><h1 class='center'>Changes</h1>{table(['Device','Interface','Status','Admin','Last Change','Speed','Title'], trs)}</section>")
+        trs += f"""
+        <tr>
+          <td>{device_anchor(row)}</td>
+          <td>{interface_anchor(row)}</td>
+          <td class="status-cell">{status_badge(row.get('ifOperStatus'))}</td>
+          <td class="status-cell">{status_badge(row.get('ifAdminStatus'))}</td>
+          <td>{h(row.get('ifLastChange_at'))}</td>
+          <td>{h(fmt_speed(row.get('ifSpeed')))}</td>
+          <td>{h(row.get('ifAlias') or row.get('ifDescr'))}</td>
+        </tr>"""
+
+    clear_href = "/reports/changes"
+    if selected_ids:
+        clear_href += "?device_ids=" + h(ids_csv(selected_ids))
+
+    body = f"""
+<section class="panel">
+  <h1 class="center">Changes</h1>
+  <div class="subtitle">Top {len(rows)} of {len(rows)}</div>
+
+  <form class="toolbar" method="get">
+    {hidden_device_ids(selected_ids)}
+    <input name="q" value="{h(q)}" placeholder="Filter selected switches, interface, title">
+    <button>Search</button>
+    <a class="button" href="{clear_href}">Clear</a>
+  </form>
+
+  {table(["Device", "Interface", "Status", "Admin", "Last Change", "Speed", "Title"], trs)}
+</section>
+"""
+    return layout("Changes", two_col("/reports/changes", selected_ids, q, body))
 
 
 @app.get("/reports/events", response_class=HTMLResponse)
-def events(q: str = "", limit: int = 250):
+def events(q: str = "", device_ids: str = "", limit: int = 250):
+    q = (q or "").strip()
+    selected_ids = selected_device_ids(device_ids)
+
     params: list[Any] = []
-    where = ""
+    where_parts: list[str] = []
+
+    add_device_filter(where_parts, params, selected_ids, "d")
+
     if q:
-        where = "WHERE d.hostname LIKE %s OR e.type LIKE %s OR e.severity LIKE %s OR e.message LIKE %s"
+        where_parts.append("""
+            (
+              COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) LIKE %s
+              OR e.type LIKE %s
+              OR e.severity LIKE %s
+              OR e.message LIKE %s
+            )
+        """)
         params.extend([f"%{q}%"] * 4)
+
+    where = "WHERE " + " AND ".join(where_parts) if where_parts else ""
     params.append(limit)
+
     rows = safe_query(f"""
-        SELECT COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device, d.device_id, e.datetime, e.type, e.severity, e.message
+        SELECT
+            COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device,
+            d.device_id,
+            e.datetime,
+            e.type,
+            e.severity,
+            e.message
         FROM eventlog e
         LEFT JOIN devices d ON d.device_id = e.device_id
         {where}
         ORDER BY e.datetime DESC
         LIMIT %s
     """, tuple(params))
+
     trs = ""
     for row in rows:
-        trs += f"<tr><td>{device_anchor(row)}</td><td>{h(row.get('datetime'))}</td><td>{h(row.get('type'))}</td><td>{h(row.get('severity'))}</td><td>{h(row.get('message'))}</td></tr>"
-    return layout("Events", f"<section class='panel'><h1 class='center'>Events</h1>{table(['Device','Date/Time','Type','Severity','Message'], trs)}</section>")
+        sev = str(row.get("severity") or "")
+        sev_class = "bad" if sev in ("4", "5", "critical", "error") else ""
+        trs += f"""
+        <tr>
+          <td>{device_anchor(row)}</td>
+          <td>{h(row.get('datetime'))}</td>
+          <td>{h(row.get('type'))}</td>
+          <td class="{sev_class}">{h(row.get('severity'))}</td>
+          <td>{h(row.get('message'))}</td>
+        </tr>"""
+
+    clear_href = "/reports/events"
+    if selected_ids:
+        clear_href += "?device_ids=" + h(ids_csv(selected_ids))
+
+    body = f"""
+<section class="panel">
+  <h1 class="center">Events</h1>
+  <div class="subtitle">Top {len(rows)} of {len(rows)}</div>
+
+  <form class="toolbar" method="get">
+    {hidden_device_ids(selected_ids)}
+    <input name="q" value="{h(q)}" placeholder="Filter selected switches, type, severity, message">
+    <button>Search</button>
+    <a class="button" href="{clear_href}">Clear</a>
+  </form>
+
+  {table(["Device", "Date/Time", "Type", "Severity", "Message"], trs)}
+</section>
+"""
+    return layout("Events", two_col("/reports/events", selected_ids, q, body))
 
 
 @app.get("/lookup", response_class=HTMLResponse)
