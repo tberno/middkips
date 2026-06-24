@@ -19,7 +19,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, Response
 
 
-APP_NAME = os.getenv("PORTAL_NAME", "MiddKIPS")
+APP_NAME = os.getenv("PORTAL_NAME", "NetOps")
 APP_ROOT_PATH = os.getenv("APP_ROOT_PATH", "").rstrip("/")
 LIBRENMS_BASE_URL = os.getenv("LIBRENMS_BASE_URL", "https://nms.jestertek.cc").rstrip("/")
 OXIDIZED_BASE_URL = os.getenv("OXIDIZED_BASE_URL", "https://nms.jestertek.cc/oxidized").rstrip("/")
@@ -612,7 +612,7 @@ def layout(title: str, body: str) -> str:
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><a href="/">MiddKIPS</a></div>
+  <div class="brand"><a href="/">NetOps</a></div>
   <nav>
     <a href="/dashboard">Dashboard</a>
     <a href="/devices">Devices</a>
@@ -940,7 +940,7 @@ def home():
         </tr>"""
     body = f"""
 <section class="hero">
-  <h1>MiddKIPS</h1>
+  <h1>NetOps</h1>
   <p>Middlebury KIPS-style network portal powered by LibreNMS.</p>
 </section>
 <section class="cards">
@@ -1113,7 +1113,7 @@ def download_device_config(device_id: int):
 
                 for url in urls:
                     try:
-                        req = urllib.request.Request(url, headers={"User-Agent": "MiddKIPS config downloader"})
+                        req = urllib.request.Request(url, headers={"User-Agent": "NetOps config downloader"})
                         with urllib.request.urlopen(req, timeout=12, context=context) as resp:
                             data = resp.read()
 
@@ -1164,7 +1164,7 @@ def device_ping(device_id: int, q: str = "", device_ids: str = "", count: int = 
 
     if not shutil.which("ping"):
         rc = 1
-        output = "ping is not installed in the MiddKIPS container."
+        output = "ping is not installed in the NetOps container."
     else:
         cmd = ["ping", "-c", str(count), "-W", "2", str(target)]
         try:
@@ -1249,7 +1249,7 @@ def device_snmpwalk(device_id: int, q: str = "", device_ids: str = "", oid: str 
 
     if not shutil.which("snmpwalk"):
         rc = 1
-        output = "snmpwalk is not installed in the MiddKIPS container."
+        output = "snmpwalk is not installed in the NetOps container."
     elif not target_ip:
         rc = 1
         output = "No IP or hostname found for this device."

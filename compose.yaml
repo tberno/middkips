@@ -1,17 +1,46 @@
 services:
   its-portal:
     build: .
-    container_name: middits-its-portal
+    container_name: middkips
+    restart: unless-stopped
     network_mode: "host"
     env_file:
-      - /opt/docker-stacks/nms-stack/.env
-    environment:
-      PORTAL_NAME: "Middlebury ITS Network Portal"
-      APP_PORT: "8050"
-      LIBRENMS_DB_HOST: "127.0.0.1"
-      LIBRENMS_DB_PORT: "3306"
-      LIBRENMS_DB_NAME: "librenms"
-      LIBRENMS_DB_USER: "librenms"
-      LIBRENMS_BASE_URL: "https://nms.jestertek.cc"
-      OXIDIZED_BASE_URL: "https://nms.jestertek.cc/oxidized"
+      - .env
+    volumes:
+      - /opt/librenms/rrd:/opt/librenms/rrd:ro
+      - ./data:/data
+    command: ["uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8051"]
+
+  netops:
+    build:
+      context: ./netops-app
+      dockerfile: ../Dockerfile
+    container_name: netops
     restart: unless-stopped
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 127.0.0.1
+      - --port
+      - "8052"
+    network_mode: host
+    environment:
+      APP_PORT: "8052"
+      APP_ROOT_PATH: /netops
+      PORTAL_NAME: NetOps
+      LIBRENMS_DB_HOST: 127.0.0.1
+      LIBRENMS_DB_PORT: "3306"
+      LIBRENMS_DB_NAME: librenms
+      LIBRENMS_DB_USER: librenms
+      LIBRENMS_DB_PASSWORD: ${LIBRENMS_DB_PASSWORD}
+      LIBRENMS_BASE_URL: https://raccoon.middlebury.edu
+      LIBRENMS_RRD_DIR: /opt/librenms/rrd
+      GRAYLOG_BASE_URL: https://raccoon.middlebury.edu/graylog
+      OXIDIZED_BASE_URL: https://raccoon.middlebury.edu/oxidized
+      ROOT_PATH: /netops
+      AKIPS_UNUSED_CACHE_FILE: /data/akips_unused_cache.json
+      UNUSED_CACHE_FILE: /data/unused_interfaces_cache.json
+    volumes:
+      - /opt/librenms/rrd:/opt/librenms/rrd:ro
+      - ./data:/data:ro
