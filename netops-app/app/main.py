@@ -622,11 +622,12 @@ def layout(title: str, body: str) -> str:
     <a href="/reports/mac-table">MAC Table</a>
     <a href="/reports/arp-ip">ARP/IP</a>
     <a href="/tools/solidserver">SolidServer</a>
+    <a href="/tools/solidserver-audit">DDI Audit</a>
     <a href="/reports/vlans">VLANs</a>
     <a href="/reports/changes">Changes</a>
     <a href="/reports/events">Events</a>
   </nav>
-  <form class="top-search" action="/lookup" method="get">
+  <form class="top-search" action="/tools/object-lookup" method="get">
     <input name="q" placeholder="Lookup device, IP, MAC, VLAN, interface">
     <button>Lookup</button>
     <button id="themeToggle" type="button" onclick="toggleTheme()">Light</button>
@@ -894,6 +895,87 @@ def hidden_device_ids(selected_ids: list[int]) -> str:
 
 app = FastAPI(title=APP_NAME)
 
+
+
+
+def _netops_prefix_html_links(html: str) -> str:
+    import os
+    import re
+
+    prefix = (os.environ.get("APP_ROOT_PATH") or os.environ.get("ROOT_PATH") or "/netops").rstrip("/")
+    if not prefix or prefix == "/":
+        return html
+
+    # Internal app paths that must stay under /netops.
+    internal_roots = (
+        "/",
+        "/dashboard",
+        "/devices",
+        "/device/",
+        "/interface/",
+        "/reports/",
+        "/tools/",
+        "/config/",
+    )
+
+    def should_prefix(url: str) -> bool:
+        if not url:
+            return False
+        if url.startswith(prefix + "/") or url == prefix:
+            return False
+        if url.startswith(("http://", "https://", "//", "#", "mailto:", "tel:", "javascript:")):
+            return False
+        if not url.startswith("/"):
+            return False
+        return url == "/" or any(url.startswith(root) for root in internal_roots if root != "/")
+
+    def repl(match):
+        attr = match.group(1)
+        quote = match.group(2)
+        url = match.group(3)
+        if should_prefix(url):
+            return f'{attr}={quote}{prefix}{url}{quote}'
+        return match.group(0)
+
+    html = re.sub(r'\b(href|action|src)=(["\'])(/[^"\']*)\2', repl, html)
+
+    # Common inline JS redirects, kept conservative.
+    html = html.replace('window.location = "/', f'window.location = "{prefix}/')
+    html = html.replace("window.location = '/", f"window.location = '{prefix}/")
+    html = html.replace('window.location.href = "/', f'window.location.href = "{prefix}/')
+    html = html.replace("window.location.href = '/", f"window.location.href = '{prefix}/")
+
+    return html
+
+
+@app.middleware("http")
+async def _netops_html_link_prefix_middleware(request, call_next):
+    from starlette.responses import Response
+
+    response = await call_next(request)
+    content_type = response.headers.get("content-type", "")
+
+    if "text/html" not in content_type:
+        return response
+
+    body = b""
+    async for chunk in response.body_iterator:
+        body += chunk
+
+    text = body.decode("utf-8", "replace")
+    text = _netops_prefix_html_links(text)
+
+    headers = dict(response.headers)
+    headers.pop("content-length", None)
+
+    return Response(
+        content=text,
+        status_code=response.status_code,
+        headers=headers,
+        media_type="text/html",
+    )
+
+
 @app.get("/healthz")
 def healthz():
     try:
@@ -906,61 +988,198 @@ def healthz():
 
 @app.get("/", response_class=HTMLResponse)
 def home():
-    devices = fetch_one("""
-        SELECT COUNT(*) AS total,
-               SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS up_count,
-               SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) AS down_count
+    import json
+    import os
+
+    base = os.environ.get("APP_ROOT_PATH") or os.environ.get("ROOT_PATH") or "/netops"
+
+    def u(path):
+        if not path.startswith("/"):
+            path = "/" + path
+        return base.rstrip("/") + path
+
+    def one(sql, params=()):
+        try:
+            return fetch_one(sql, params) or {}
+        except Exception:
+            return {}
+
+    def many(sql, params=()):
+        try:
+            return safe_query(sql, params) or []
+        except Exception:
+            return []
+
+    devices = one("""
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS up_count,
+            SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) AS down_count
         FROM devices
     """)
-    ports = fetch_one("""
-        SELECT COUNT(*) AS total,
-               SUM(CASE WHEN ifOperStatus = 'up' THEN 1 ELSE 0 END) AS up_count,
-               SUM(CASE WHEN ifOperStatus = 'down' THEN 1 ELSE 0 END) AS down_count
+
+    ports = one("""
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN ifOperStatus = 'up' THEN 1 ELSE 0 END) AS up_count,
+            SUM(CASE WHEN ifOperStatus = 'down' THEN 1 ELSE 0 END) AS down_count
         FROM ports
     """)
-    busy = fetch_all("""
-        SELECT COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device, d.device_id, p.port_id, p.ifName, p.ifAlias, p.ifSpeed,
-               p.ifOperStatus, p.ifInOctets_rate, p.ifOutOctets_rate
-        FROM ports p
-        JOIN devices d ON d.device_id = p.device_id
-        ORDER BY COALESCE(p.ifInOctets_rate,0) + COALESCE(p.ifOutOctets_rate,0) DESC
-        LIMIT 30
-    """)
-    rows = ""
-    for row in busy:
-        rows += f"""
-        <tr>
-          <td>{device_anchor(row)}</td>
-          <td>{interface_anchor(row)}</td>
-          <td class="status-cell">{status_badge(row.get('ifOperStatus'))}</td>
-          <td>{h(fmt_speed(row.get('ifSpeed')))}</td>
-          <td>{h(fmt_rate(row.get('ifInOctets_rate')))}</td>
-          <td>{h(fmt_rate(row.get('ifOutOctets_rate')))}</td>
-          <td>{h(row.get('ifAlias'))}</td>
-        </tr>"""
-    body = f"""
-<section class="hero">
-  <h1>NetOps</h1>
-  <p>Middlebury KIPS-style network portal powered by LibreNMS.</p>
-</section>
-<section class="cards">
-  {card("Devices", devices.get("total") or 0)}
-  {card("Devices Up", devices.get("up_count") or 0)}
-  {card("Devices Down", devices.get("down_count") or 0)}
-  {card("Ports", ports.get("total") or 0)}
-  {card("Ports Up", ports.get("up_count") or 0)}
-  {card("Ports Down", ports.get("down_count") or 0)}
-</section>
-<section class="panel">
-  <div class="panel-head">
-    <h2>Top Activity</h2>
-    <a class="button" href="/devices">Browse Devices</a>
-  </div>
-  {table(["Device", "Interface", "Status", "Speed", "In", "Out", "Title"], rows)}
-</section>
-"""
-    return layout("Home", body)
 
+    # Prefer live SolidServer dashboard for DDI, but keep these counts safe.
+    solid_total = 0
+    solid_crit = 0
+
+    unused_count = "n/a"
+    cache_file = os.environ.get("UNUSED_CACHE_FILE", "/data/unused_interfaces_cache.json")
+    try:
+        if os.path.exists(cache_file):
+            with open(cache_file, "r") as fh:
+                cache = json.load(fh)
+            unused_count = cache.get("cached_ports") or cache.get("ports_total") or len(cache.get("ports", []))
+    except Exception:
+        pass
+
+    def tile(title, desc, href, meta=""):
+        meta_html = f"<div class='hub-meta'>{h(meta)}</div>" if meta else ""
+        return f"""
+        <a class="hub-tile" href="{h(href)}">
+          <div class="hub-title">{h(title)}</div>
+          <div class="hub-desc">{h(desc)}</div>
+          {meta_html}
+        </a>
+        """
+
+    body = """
+
+      <h1>NetOps Hub</h1>
+      <p>Central lookup and reporting across LibreNMS, AKIPS-derived interface data, SolidServer DDI, topology, logs, and config tools.</p>
+
+      <form method="get" action="/netops/tools/object-lookup" style="display:flex;gap:.5rem;margin:1rem 0 1.25rem 0;">
+        <input name="q" placeholder="Search IP, MAC, hostname, FQDN, DNS RR, VLAN, switch, or interface" style="flex:1;min-width:320px;">
+        <button type="submit">Universal Lookup</button>
+      </form>
+
+      <!-- NETOPS_HUB_FULL_REPLACE_V1 -->
+
+      <style>
+        /* NETOPS_HUB_CARD_STYLE_V1 */
+        .hub-section-title {
+          margin: 1.1rem 0 0.65rem 0;
+          font-size: 1.05rem;
+          color: #ffffff;
+        }
+
+        .tool-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+          gap: 0.75rem;
+          margin-bottom: 0.5rem;
+        }
+
+        .tool-card {
+          display: block;
+          min-height: 105px;
+          padding: 1rem;
+          border: 1px solid rgba(100, 130, 150, 0.45);
+          border-radius: 0.45rem;
+          background: rgba(18, 32, 42, 0.95);
+          color: inherit;
+          text-decoration: none;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+        }
+
+        .tool-card:hover {
+          border-color: rgba(125, 211, 252, 0.65);
+          background: rgba(24, 44, 58, 0.98);
+        }
+
+        .tool-card h3 {
+          margin: 0 0 0.55rem 0;
+          font-size: 1.1rem;
+          line-height: 1.2;
+          color: #ffffff;
+        }
+
+        .tool-card p {
+          margin: 0;
+          max-width: 42rem;
+          color: #c6e8f8;
+          font-size: 0.9rem;
+          line-height: 1.35;
+        }
+      </style>
+
+      <section>
+        <h2 class="hub-section-title">Fast Triage</h2>
+        <div class="tool-grid">
+          <a class="tool-card" href="/netops/tools/object-lookup">
+            <h3>Universal Lookup</h3>
+            <p>Fan-out lookup across LibreNMS, SolidServer, ARP/IP, MAC/FDB, events, and Graylog helpers.</p>
+          </a>
+          <a class="tool-card" href="/netops/tools/solidserver">
+            <h3>SolidServer DDI</h3>
+            <p>DNS, DHCP, IPAM, reservations, ranges, scopes, static records, and zones.</p>
+          </a>
+          <a class="tool-card" href="/netops/reports/mac-table">
+            <h3>MAC to Switch Port</h3>
+            <p>Find where a MAC address is learned and map it back to switch, port, and VLAN.</p>
+          </a>
+          <a class="tool-card" href="/netops/reports/arp-ip">
+            <h3>ARP / IP Trace</h3>
+            <p>Trace IP addresses to MAC addresses, device context, and interface data.</p>
+          </a>
+        </div>
+      </section>
+
+      <section style="margin-top:1rem;">
+        <h2 class="hub-section-title">Operational Reports</h2>
+        <div class="tool-grid">
+          <a class="tool-card" href="/netops/reports/interface-statistics">
+            <h3>Interface Statistics</h3>
+            <p>Top traffic, error counters, MAC counts, uplinks, and active interface reporting.</p>
+          </a>
+          <a class="tool-card" href="/netops/reports/unused-interfaces">
+            <h3>Unused Interfaces</h3>
+            <p>Long-term unused-port reporting and candidate shutdown cleanup lists.</p>
+          </a>
+          <a class="tool-card" href="/netops/reports/events">
+            <h3>Events / Changes</h3>
+            <p>Recent LibreNMS events by device, port, interface, or message.</p>
+          </a>
+          <a class="tool-card" href="#" onclick="return false">
+            <h3>Graylog Helper</h3>
+            <p>Build log searches around IPs, MACs, hostnames, DNS changes, and devices.</p>
+          </a>
+        </div>
+      </section>
+
+      <section style="margin-top:1rem;">
+        <h2 class="hub-section-title">Data Quality / Cleanup</h2>
+        <div class="tool-grid">
+          <a class="tool-card" href="/netops/tools/unmatched-lldp-switches">
+            <h3>Unmatched LLDP</h3>
+            <p>Find neighbor data that does not map cleanly to inventory.</p>
+          </a>
+          <a class="tool-card" href="/netops/devices?status=down">
+            <h3>Down Devices</h3>
+            <p>Jump to devices needing reachability or monitoring review.</p>
+          </a>
+          <a class="tool-card" href="/netops/tools/solidserver-audit">
+            <h3>DDI Audit</h3>
+            <p>DNS, DHCP, and IPAM change investigation entry point.</p>
+          </a>
+          <a class="tool-card" href="/netops/reports/interface-statistics?errors=1">
+            <h3>Interfaces with Errors</h3>
+            <p>Start an interface-health report focused on error counters.</p>
+          </a>
+        </div>
+      </section>
+
+
+    """
+
+    return layout("NetOps Hub", body)
 
 
 
@@ -3558,3 +3777,973 @@ def tools_solidserver(q: str = ""):
     """
 
     return layout("SolidServer", body)
+
+
+
+
+
+
+
+
+
+def _netops_fmt_eip_time(value):
+    from datetime import datetime, timezone
+
+    if value is None or value == "":
+        return ""
+
+    raw = str(value).strip()
+
+    # Leave non-numeric values alone.
+    try:
+        n = float(raw)
+    except Exception:
+        return raw
+
+    # SolidServer/EIP API commonly returns epoch seconds.
+    # Guard against tiny counters / non-date numeric values.
+    if n < 1000000000:
+        return raw
+
+    # Handle epoch milliseconds if they ever appear.
+    if n > 100000000000:
+        n = n / 1000.0
+
+    try:
+        return datetime.fromtimestamp(n, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    except Exception:
+        return raw
+
+def _netops_dedupe_rows(rows, keys, limit=None):
+    seen = set()
+    out = []
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        sig = tuple(str(r.get(k) or "").strip().lower() for k in keys)
+        if sig in seen:
+            continue
+        seen.add(sig)
+        out.append(r)
+        if limit and len(out) >= limit:
+            break
+    return out
+
+def _netops_solidserver_inline_lookup(q: str, u) -> str:
+    q = (q or "").strip()
+    if not q:
+        return ""
+
+    def sql_quote(v):
+        return "'" + str(v).replace("'", "''") + "'"
+
+    def sql_like(v):
+        return "'%" + str(v).replace("'", "''") + "%'"
+
+    exact = sql_quote(q)
+    like = sql_like(q)
+    mac = q.replace(":", "").replace("-", "").replace(".", "").lower()
+    mac_like = sql_like(mac) if mac else like
+
+    def fetch(endpoint, where, max_rows=50):
+        try:
+            return _eip_get_rows_paged(endpoint, where, max_rows=max_rows) or []
+        except NameError:
+            try:
+                return _eip_get_rows(endpoint, where, max_rows=max_rows) or []
+            except Exception as exc:
+                return [{"_netops_error": str(exc)}]
+        except Exception as exc:
+            return [{"_netops_error": str(exc)}]
+
+    ipam = fetch("/rest/ip_address_list", " OR ".join([
+        f"hostaddr={exact}",
+        f"name LIKE {like}",
+        f"ip_alias LIKE {like}",
+        f"mac_addr LIKE {mac_like}",
+        f"subnet_name LIKE {like}",
+        f"pool_name LIKE {like}",
+        f"site_name LIKE {like}",
+    ]), 50)
+
+    statics = fetch("/rest/dhcp_static_list", " OR ".join([
+        f"dhcphost_name LIKE {like}",
+        f"dhcphost_addr={exact}",
+        f"dhcphost_mac_addr LIKE {mac_like}",
+        f"db_hostname LIKE {like}",
+        f"dhcpscope_name LIKE {like}",
+        f"dhcpsn_name LIKE {like}",
+    ]), 50)
+
+    scopes = fetch("/rest/dhcp_scope_list", " OR ".join([
+        f"dhcpscope_name LIKE {like}",
+        f"dhcpscope_net_addr={exact}",
+        f"dhcpsn_name LIKE {like}",
+        f"dhcp_name LIKE {like}",
+    ]), 50)
+
+    ranges = fetch("/rest/dhcp_range_list", " OR ".join([
+        f"dhcpsn_name LIKE {like}",
+        f"dhcpscope_name LIKE {like}",
+        f"dhcprange_start_addr={exact}",
+        f"dhcprange_end_addr={exact}",
+        f"dhcp_name LIKE {like}",
+    ]), 50)
+
+    rrs = fetch("/rest/dns_rr_list", " OR ".join([
+        f"rr_full_name LIKE {like}",
+        f"rr_all_value LIKE {like}",
+        f"value1 LIKE {like}",
+        f"value2 LIKE {like}",
+        f"target LIKE {like}",
+        f"dnszone_name LIKE {like}",
+        f"dnsview_name LIKE {like}",
+    ]), 100)
+
+    def is_err(rows):
+        return rows and isinstance(rows[0], dict) and rows[0].get("_netops_error")
+
+    errors = []
+    for label, rows in [
+        ("IPAM", ipam),
+        ("DHCP Static", statics),
+        ("DHCP Scopes", scopes),
+        ("DHCP Ranges", ranges),
+        ("DNS RRs", rrs),
+    ]:
+        if is_err(rows):
+            errors.append(f"{label}: {rows[0].get('_netops_error')}")
+
+    def clean(rows):
+        return [] if is_err(rows) else rows
+
+    ipam = _netops_dedupe_rows(clean(ipam), ["hostaddr", "name", "mac_addr"], 50)
+    statics = _netops_dedupe_rows(clean(statics), ["dhcphost_addr", "dhcphost_name", "dhcphost_mac_addr"], 50)
+    scopes = _netops_dedupe_rows(clean(scopes), ["dhcpscope_name", "dhcpscope_net_addr", "dhcpsn_name"], 50)
+    ranges = _netops_dedupe_rows(clean(ranges), ["dhcprange_start_addr", "dhcprange_end_addr", "dhcpscope_name", "dhcp_name"], 50)
+    rrs = _netops_dedupe_rows(clean(rrs), ["rr_full_name", "rr_type", "rr_all_value", "dnszone_name", "dnsview_name"], 75)
+
+    def make_table(rows, cols):
+        if not rows:
+            return "<p>No matches.</p>"
+        body = ""
+        date_keys = {
+            "last_seen",
+            "dhcphost_last_seen",
+            "dhcphost_expire_time",
+            "dhcplease_end_time",
+            "trace_creation_date",
+            "trace_last_update_date",
+            "rr_last_update_time",
+        }
+        for r in rows:
+            cells = []
+            for _, key in cols:
+                value = r.get(key)
+                if key in date_keys:
+                    value = _netops_fmt_eip_time(value)
+                cells.append(f"<td>{h(value)}</td>")
+            body += "<tr>" + "".join(cells) + "</tr>"
+        return table([label for label, _ in cols], body)
+
+    dhcp_ipam = []
+    for r in ipam:
+        pool = str(r.get("pool_name") or "").lower()
+        has_lease_fields = any(r.get(k) for k in ("dhcplease_id", "dhcplease_end_time", "dhcphost_id"))
+        if pool == "dhcp" or has_lease_fields:
+            dhcp_ipam.append(r)
+
+    error_html = ""
+    if errors:
+        error_html = "<div class='unused-total'>" + "<br>".join(h(e) for e in errors) + "</div>"
+
+    return f"""
+    <section class="panel">
+      <h2>SolidServer / DDI</h2>
+      <div class="dashboard-grid">
+        {card("IPAM", len(ipam))}
+        {card("DHCP Static", len(statics))}
+        {card("DHCP Scopes", len(scopes))}
+        {card("DHCP Ranges", len(ranges))}
+        {card("DNS RRs", len(rrs))}
+      </div>
+      <p><a class="button" href="{h(u('/tools/solidserver'))}?q={h(q)}">Open full SolidServer lookup</a></p>
+      {error_html}
+    </section>
+
+    <section class="panel">
+      <h3>SolidServer IPAM Address Records</h3>
+      {make_table(ipam, [
+        ("IP", "hostaddr"),
+        ("Name", "name"),
+        ("Alias", "ip_alias"),
+        ("MAC", "mac_addr"),
+        ("Subnet", "subnet_name"),
+        ("Pool", "pool_name"),
+        ("Last Seen", "last_seen"),
+        ("Created By", "trace_creation_origin_usr_login"),
+        ("Updated", "trace_last_update_date"),
+      ])}
+    </section>
+
+    <section class="panel">
+      <h3>SolidServer DHCP / Lease Evidence</h3>
+      <p class="unused-total">
+        These are IPAM address records that appear DHCP-managed. A count of zero under Static / Reservations means no static reservation was found, not that DHCP is absent.
+      </p>
+      {make_table(dhcp_ipam, [
+        ("IP", "hostaddr"),
+        ("Name", "name"),
+        ("MAC", "mac_addr"),
+        ("Pool", "pool_name"),
+        ("Subnet", "subnet_name"),
+        ("DHCP Lease ID", "dhcplease_id"),
+        ("Lease End", "dhcplease_end_time"),
+        ("Last Seen", "last_seen"),
+        ("Updated", "trace_last_update_date"),
+      ])}
+    </section>
+
+    <section class="panel">
+      <h3>SolidServer DNS Resource Records</h3>
+      {make_table(rrs, [
+        ("Name", "rr_full_name"),
+        ("Type", "rr_type"),
+        ("Value", "rr_all_value"),
+        ("Target", "target"),
+        ("Zone", "dnszone_name"),
+        ("View", "dnsview_name"),
+      ])}
+    </section>
+
+    <section class="panel">
+      <h3>SolidServer DHCP Static / Reservations</h3>
+      {make_table(statics, [
+        ("Name", "dhcphost_name"),
+        ("IP", "dhcphost_addr"),
+        ("MAC", "dhcphost_mac_addr"),
+        ("Scope", "dhcpscope_name"),
+        ("Shared Network", "dhcpsn_name"),
+        ("DHCP Server", "dhcp_name"),
+        ("Last Seen", "dhcphost_last_seen"),
+      ])}
+    </section>
+
+    <section class="panel">
+      <h3>SolidServer DHCP Scopes</h3>
+      {make_table(scopes, [
+        ("Scope", "dhcpscope_name"),
+        ("Network", "dhcpscope_net_addr"),
+        ("Prefix", "dhcpscope_prefix"),
+        ("Shared Network", "dhcpsn_name"),
+        ("DHCP Server", "dhcp_name"),
+      ])}
+    </section>
+
+    <section class="panel">
+      <h3>SolidServer DHCP Ranges</h3>
+      {make_table(ranges, [
+        ("Shared Network", "dhcpsn_name"),
+        ("Scope", "dhcpscope_name"),
+        ("Start", "dhcprange_start_addr"),
+        ("End", "dhcprange_end_addr"),
+        ("Used", "dhcprange_lease_count"),
+        ("Size", "dhcprange_size"),
+        ("Used %", "dhcprange_lease_percent"),
+        ("DHCP Server", "dhcp_name"),
+      ])}
+    </section>
+    """
+
+
+@app.get("/tools/object-lookup", response_class=HTMLResponse)
+def tools_object_lookup(q: str = ""):
+    import os
+    import urllib.parse
+
+    base = os.environ.get("APP_ROOT_PATH") or os.environ.get("ROOT_PATH") or "/netops"
+
+    def u(path):
+        if not path.startswith("/"):
+            path = "/" + path
+        return base.rstrip("/") + path
+
+    q = (q or "").strip()
+
+    if not q:
+        body = f"""
+        <section class="panel">
+          <h1>Universal Lookup</h1>
+          <p>Search across LibreNMS, SolidServer, AKIPS-derived reports, topology, and log-search helpers.</p>
+          <form class="unused-controls" method="get" action="{h(u('/tools/object-lookup'))}">
+            <input name="q" placeholder="IP, MAC, hostname, FQDN, DNS RR, VLAN, switch, interface">
+            <button class="button" type="submit">Lookup</button>
+          </form>
+        </section>
+        """
+        return layout("Universal Lookup", body)
+
+    like = f"%{q}%"
+    mac_clean = q.replace(":", "").replace("-", "").replace(".", "").lower()
+    mac_like = f"%{mac_clean}%"
+
+    def many(sql, params=()):
+        try:
+            return safe_query(sql, params) or []
+        except Exception:
+            return []
+
+    devices = many("""
+        SELECT device_id,
+               COALESCE(NULLIF(sysName,''), NULLIF(hostname,''), INET6_NTOA(ip)) AS device,
+               hostname, sysName, INET6_NTOA(ip) AS ip, hardware, os, status
+        FROM devices
+        WHERE hostname LIKE %s OR sysName LIKE %s OR hardware LIKE %s OR INET6_NTOA(ip) LIKE %s
+        ORDER BY hostname
+        LIMIT 50
+    """, (like, like, like, like))
+
+    ports = many("""
+        SELECT p.port_id, p.device_id, p.ifName, p.ifDescr, p.ifAlias,
+               p.ifOperStatus, p.ifAdminStatus, p.ifVlan,
+               COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device
+        FROM ports p
+        JOIN devices d ON d.device_id = p.device_id
+        WHERE p.ifName LIKE %s OR p.ifDescr LIKE %s OR p.ifAlias LIKE %s OR p.ifVlan LIKE %s
+           OR d.hostname LIKE %s OR d.sysName LIKE %s
+        ORDER BY device, p.ifName
+        LIMIT 100
+    """, (like, like, like, like, like, like))
+
+    arp = many("""
+        SELECT m.ipv4_address, m.mac_address, m.context_name,
+               COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device,
+               d.device_id, p.ifName, p.port_id, p.ifOperStatus
+        FROM ipv4_mac m
+        LEFT JOIN ports p ON p.port_id = m.port_id
+        LEFT JOIN devices d ON d.device_id = COALESCE(m.device_id, p.device_id)
+        WHERE m.ipv4_address LIKE %s
+           OR LOWER(REPLACE(REPLACE(REPLACE(m.mac_address, ':', ''), '-', ''), '.', '')) LIKE %s
+           OR d.hostname LIKE %s OR d.sysName LIKE %s OR p.ifName LIKE %s
+        ORDER BY m.ipv4_address
+        LIMIT 100
+    """, (like, mac_like, like, like, like))
+
+    fdb = many("""
+        SELECT f.mac_address, f.vlan_id, f.created_at, f.updated_at,
+               p.port_id, p.ifName, p.device_id,
+               COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device
+        FROM ports_fdb f
+        LEFT JOIN ports p ON p.port_id = f.port_id
+        LEFT JOIN devices d ON d.device_id = p.device_id
+        WHERE LOWER(REPLACE(REPLACE(REPLACE(f.mac_address, ':', ''), '-', ''), '.', '')) LIKE %s
+           OR f.vlan_id LIKE %s OR p.ifName LIKE %s OR d.hostname LIKE %s OR d.sysName LIKE %s
+        ORDER BY f.updated_at DESC
+        LIMIT 100
+    """, (mac_like, like, like, like, like))
+
+    event_rows = many("""
+        SELECT e.datetime, e.severity, e.type, e.message,
+               COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device,
+               d.device_id
+        FROM eventlog e
+        LEFT JOIN devices d ON d.device_id = e.device_id
+        WHERE e.message LIKE %s OR e.type LIKE %s OR d.hostname LIKE %s OR d.sysName LIKE %s
+        ORDER BY e.datetime DESC
+        LIMIT 50
+    """, (like, like, like, like))
+
+    def empty_or(rows, body):
+        return body if rows else '<tr><td colspan="10">No results found.</td></tr>'
+
+    dev_body = ""
+    for r in devices:
+        dev_body += f"""
+        <tr>
+          <td><a href="{h(u('/dashboard'))}?device_ids={h(r.get('device_id'))}">{h(r.get('device'))}</a></td>
+          <td>{h(r.get('ip'))}</td>
+          <td>{h(r.get('hardware'))}</td>
+          <td>{h(r.get('os'))}</td>
+          <td>{h(r.get('status'))}</td>
+        </tr>
+        """
+
+    port_body = ""
+    for r in ports:
+        port_body += f"""
+        <tr>
+          <td><a href="{h(u('/dashboard'))}?device_ids={h(r.get('device_id'))}">{h(r.get('device'))}</a></td>
+          <td><a href="{h(u('/interface'))}/{h(r.get('port_id'))}">{h(r.get('ifName'))}</a></td>
+          <td>{h(r.get('ifOperStatus'))}</td>
+          <td>{h(r.get('ifAdminStatus'))}</td>
+          <td>{h(r.get('ifVlan'))}</td>
+          <td>{h(r.get('ifAlias') or r.get('ifDescr'))}</td>
+        </tr>
+        """
+
+    arp_body = ""
+    for r in arp:
+        arp_body += f"""
+        <tr>
+          <td>{h(r.get('ipv4_address'))}</td>
+          <td>{h(fmt_mac(r.get('mac_address')))}</td>
+          <td><a href="{h(u('/dashboard'))}?device_ids={h(r.get('device_id'))}">{h(r.get('device'))}</a></td>
+          <td><a href="{h(u('/interface'))}/{h(r.get('port_id'))}">{h(r.get('ifName'))}</a></td>
+          <td>{h(r.get('ifOperStatus'))}</td>
+          <td>{h(r.get('context_name'))}</td>
+        </tr>
+        """
+
+    fdb_body = ""
+    for r in fdb:
+        fdb_body += f"""
+        <tr>
+          <td>{h(fmt_mac(r.get('mac_address')))}</td>
+          <td>{h(r.get('vlan_id'))}</td>
+          <td><a href="{h(u('/dashboard'))}?device_ids={h(r.get('device_id'))}">{h(r.get('device'))}</a></td>
+          <td><a href="{h(u('/interface'))}/{h(r.get('port_id'))}">{h(r.get('ifName'))}</a></td>
+          <td>{h(r.get('updated_at'))}</td>
+        </tr>
+        """
+
+    ev_body = ""
+    for r in event_rows:
+        ev_body += f"""
+        <tr>
+          <td>{h(r.get('datetime'))}</td>
+          <td>{h(r.get('severity'))}</td>
+          <td>{h(r.get('type'))}</td>
+          <td><a href="{h(u('/dashboard'))}?device_ids={h(r.get('device_id'))}">{h(r.get('device'))}</a></td>
+          <td>{h(r.get('message'))}</td>
+        </tr>
+        """
+
+    graylog_query = urllib.parse.quote(f'"{q}"')
+
+    solidserver_inline = ""
+    if "_netops_solidserver_inline_lookup" in globals():
+        solidserver_inline = _netops_solidserver_inline_lookup(q, u)
+    else:
+        solidserver_inline = f"""
+        <section class="panel">
+          <h2>SolidServer / DDI</h2>
+          <a class="button" href="{h(u('/tools/solidserver'))}?q={h(q)}">Open SolidServer lookup</a>
+        </section>
+        """
+
+    body = f"""
+    <section class="panel">
+      <h1>Universal Lookup: {h(q)}</h1>
+      <form class="unused-controls" method="get" action="{h(u('/tools/object-lookup'))}">
+        <input name="q" value="{h(q)}" placeholder="IP, MAC, hostname, FQDN, VLAN, switch, interface, DNS RR">
+        <button class="button" type="submit">Lookup</button>
+        <a class="button" href="{h(u('/tools/object-lookup'))}">Clear</a>
+      </form>
+    </section>
+
+    <section class="dashboard-grid">
+      {card("Devices", len(devices))}
+      {card("Ports", len(ports))}
+      {card("ARP/IP", len(arp))}
+      {card("MAC/FDB", len(fdb))}
+      {card("Events", len(event_rows))}
+    </section>
+
+    <section class="panel">
+      <h2>Quick Links</h2>
+      <a class="button" href="{h(u('/tools/solidserver'))}?q={h(q)}">SolidServer DDI</a>
+      <a class="button" href="{h(u('/reports/arp-ip'))}?q={h(q)}">ARP/IP</a>
+      <a class="button" href="{h(u('/reports/mac-table'))}?q={h(q)}">MAC Table</a>
+      <a class="button" href="{h(u('/reports/events'))}?q={h(q)}">Events</a>
+      <a class="button" href="https://graylog.middlebury.edu/search?q={h(graylog_query)}">Graylog Search</a>
+    </section>
+
+    {solidserver_inline}
+
+    <section class="panel"><h2>Devices</h2>{table(["Device", "IP", "Hardware", "OS", "Status"], empty_or(devices, dev_body))}</section>
+    <section class="panel"><h2>Ports / Interfaces</h2>{table(["Device", "Interface", "Oper", "Admin", "VLAN", "Description"], empty_or(ports, port_body))}</section>
+    <section class="panel"><h2>ARP / IP</h2>{table(["IP", "MAC", "Device", "Interface", "Status", "Context"], empty_or(arp, arp_body))}</section>
+    <section class="panel"><h2>MAC / FDB</h2>{table(["MAC", "VLAN", "Device", "Interface", "Last Seen"], empty_or(fdb, fdb_body))}</section>
+    <section class="panel"><h2>Events</h2>{table(["Time", "Severity", "Type", "Device", "Message"], empty_or(event_rows, ev_body))}</section>
+    """
+
+    return layout("Universal Lookup", body)
+
+
+
+def _netops_find_solidserver_audit_endpoint():
+    candidates = [
+        "/rest/system_usertracking_list",
+        "/rest/mod_system_usertracking_list",
+        "/rest/user_tracking_list",
+        "/rest/usertracking_list",
+        "/rest/audit_list",
+        "/rest/system_audit_list",
+        "/rest/mod_system_audit_list",
+        "/rest/log_usertracking_list",
+        "/rest/mod_system_user_tracking_list",
+    ]
+
+    for ep in candidates:
+        try:
+            rows = _eip_get_rows_paged(ep, "", max_rows=1)
+            if isinstance(rows, list):
+                return ep
+        except Exception:
+            pass
+
+    return ""
+
+
+def _netops_audit_value(row, candidates):
+    for key in candidates:
+        if key in row and row.get(key) not in (None, ""):
+            return row.get(key)
+    return ""
+
+
+def _netops_redact_audit_description(value):
+    import re
+
+    text = str(value or "")
+
+    # Keep descriptions useful, but avoid exposing obvious key/secret values.
+    text = re.sub(r"(?i)(key value:\s*)\S+", r"\1<redacted>", text)
+    text = re.sub(r"(?i)(password:\s*)\S+", r"\1<redacted>", text)
+    text = re.sub(r"(?i)(secret:\s*)\S+", r"\1<redacted>", text)
+    text = re.sub(r"(?i)(token:\s*)\S+", r"\1<redacted>", text)
+
+    return text
+
+
+@app.get("/tools/solidserver-audit", response_class=HTMLResponse)
+def tools_solidserver_audit(q: str = "", mode: str = "rr", limit: int = 50):
+    import os
+
+    base = os.environ.get("APP_ROOT_PATH") or os.environ.get("ROOT_PATH") or "/netops"
+
+    def u(path):
+        if not path.startswith("/"):
+            path = "/" + path
+        return base.rstrip("/") + path
+
+    q = (q or "").strip()
+    mode = (mode or "rr").strip().lower()
+    limit = max(1, min(int(limit or 50), 200))
+
+    ep = _netops_find_solidserver_audit_endpoint()
+
+    if not ep:
+        body = f"""
+        <section class="panel">
+          <h1>SolidServer Audit / User Tracking</h1>
+          <p>Could not discover the SolidServer user tracking REST endpoint.</p>
+          <p>Use browser developer tools on the EfficientIP User tracking page and look for the REST endpoint behind <code>mod_system_usertracking_list</code>.</p>
+        </section>
+        """
+        return layout("SolidServer Audit", body)
+
+    where_parts = []
+
+    if mode == "rr":
+        where_parts.append("service LIKE '%DNS RRs%'")
+    elif mode == "dns":
+        where_parts.append("service LIKE '%DNS%'")
+    elif mode == "dhcp":
+        where_parts.append("service LIKE '%DHCP%'")
+    elif mode == "ipam":
+        where_parts.append("service LIKE '%IP%'")
+
+    if q:
+        safe_q = q.replace("'", "''")
+        where_parts.append("(" + " OR ".join([
+            f"description LIKE '%{safe_q}%'",
+            f"user LIKE '%{safe_q}%'",
+            f"user_name LIKE '%{safe_q}%'",
+            f"user_login LIKE '%{safe_q}%'",
+            f"usr_login LIKE '%{safe_q}%'",
+            f"service LIKE '%{safe_q}%'",
+        ]) + ")")
+
+    where = " AND ".join(where_parts)
+
+    try:
+        rows = _eip_get_rows_paged(ep, where, max_rows=limit)
+    except Exception as exc:
+        rows = []
+        error = str(exc)
+    else:
+        error = ""
+
+    # Try newest first if the API did not already sort.
+    def sort_key(r):
+        for k in ("date", "event_date", "tracking_date", "modification_date", "creation_date"):
+            if k in r:
+                return str(r.get(k) or "")
+        return ""
+
+    rows = sorted(rows or [], key=sort_key, reverse=True)
+
+    rr_add_delete = []
+    for r in rows:
+        service = str(_netops_audit_value(r, ["service", "service_name", "mod_service"]) or "")
+        if mode == "rr" and not any(x in service.lower() for x in ["dns rrs", "dns rr"]):
+            continue
+        rr_add_delete.append(r)
+
+    if mode == "rr":
+        rows = rr_add_delete
+
+    body_rows = ""
+    for r in rows[:limit]:
+        date = _netops_audit_value(r, [
+            "date",
+            "event_date",
+            "tracking_date",
+            "modification_date",
+            "creation_date",
+            "trace_date",
+        ])
+        service = _netops_audit_value(r, [
+            "service",
+            "service_name",
+            "mod_service",
+        ])
+        user = _netops_audit_value(r, [
+            "user",
+            "user_name",
+            "user_login",
+            "usr_login",
+            "login",
+        ])
+        desc = _netops_audit_value(r, [
+            "description",
+            "desc",
+            "message",
+            "detail",
+            "details",
+        ])
+
+        desc = _netops_redact_audit_description(desc)
+
+        body_rows += f"""
+        <tr>
+          <td>{h(date)}</td>
+          <td>{h(service)}</td>
+          <td>{h(user)}</td>
+          <td>{h(desc)}</td>
+        </tr>
+        """
+
+    if not body_rows:
+        body_rows = '<tr><td colspan="4">No audit rows found.</td></tr>'
+
+    error_html = f"<p class='bad'>{h(error)}</p>" if error else ""
+
+    mode_buttons = f"""
+      <a class="button" href="{h(u('/tools/solidserver-audit'))}?mode=rr&q={h(q)}">RR Add/Delete</a>
+      <a class="button" href="{h(u('/tools/solidserver-audit'))}?mode=dns&q={h(q)}">DNS</a>
+      <a class="button" href="{h(u('/tools/solidserver-audit'))}?mode=dhcp&q={h(q)}">DHCP</a>
+      <a class="button" href="{h(u('/tools/solidserver-audit'))}?mode=ipam&q={h(q)}">IPAM</a>
+      <a class="button" href="{h(u('/tools/solidserver-audit'))}?mode=all&q={h(q)}">All</a>
+    """
+
+    body = f"""
+    <section class="panel">
+      <h1>SolidServer Audit / User Tracking</h1>
+      <p class="muted">Endpoint: {h(ep)}</p>
+      <form class="toolbar" method="get" action="{h(u('/tools/solidserver-audit'))}">
+        <input name="q" value="{h(q)}" placeholder="Search user, DNS name, IP, MAC, DHCP object, description">
+        <input type="hidden" name="mode" value="{h(mode)}">
+        <button class="button" type="submit">Search</button>
+        <a class="button" href="{h(u('/tools/solidserver-audit'))}">Clear</a>
+      </form>
+      <div class="actions">{mode_buttons}</div>
+      {error_html}
+    </section>
+
+    <section class="panel">
+      <h2>Top {h(limit)} List: {h(mode.upper())}</h2>
+      {table(["Date", "Service", "User", "Description"], body_rows)}
+    </section>
+    """
+
+    return layout("SolidServer Audit", body)
+
+
+# NETOPS_EXPORT_TOOLS_V1
+# Adds a lightweight report toolbar to all NetOps HTML pages.
+# CSV export is generated client-side from visible tables.
+# PDF export uses the browser print dialog / Save as PDF.
+from starlette.responses import Response as _NetOpsExportResponse
+
+_NETOPS_EXPORT_TOOLS_HTML = r"""
+<!-- NETOPS_EXPORT_TOOLS_V1 -->
+<style>
+  #netops-export-toolbar {
+    position: fixed;
+    right: 14px;
+    bottom: 14px;
+    z-index: 2147483000;
+    display: flex;
+    gap: 0.25rem;
+    align-items: center;
+    margin: 0;
+    padding: 0.25rem;
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.88);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+    backdrop-filter: blur(4px);
+  }
+  #netops-export-toolbar button {
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    border-radius: 999px;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.95);
+    color: #0f172a;
+    font-size: 0.72rem;
+    line-height: 1.1;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  #netops-export-toolbar .netops-export-note {
+    display: none;
+  }
+  #netops-print-meta {
+    display: none;
+  }
+  @media print {
+    #netops-export-toolbar,
+    nav,
+    aside,
+    form,
+    input,
+    select,
+    textarea,
+    button,
+    .no-print {
+      display: none !important;
+    }
+    #netops-print-meta {
+      display: block !important;
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid #999;
+      font-size: 11px;
+    }
+    body {
+      background: white !important;
+      color: #111 !important;
+    }
+    a {
+      color: #111 !important;
+      text-decoration: none !important;
+    }
+    table {
+      width: 100% !important;
+      border-collapse: collapse !important;
+      page-break-inside: auto;
+    }
+    thead {
+      display: table-header-group;
+    }
+    tr {
+      page-break-inside: avoid;
+      page-break-after: auto;
+    }
+    th, td {
+      border: 1px solid #bbb !important;
+      padding: 4px 5px !important;
+      font-size: 10px !important;
+      color: #111 !important;
+      background: white !important;
+    }
+  }
+</style>
+
+<script>
+(function () {
+  if (window.__netopsExportToolsV1) return;
+  window.__netopsExportToolsV1 = true;
+
+  function cleanText(value) {
+    return String(value || "")
+      .replace(/\\s+/g, " ")
+      .replace(/\\u00a0/g, " ")
+      .trim();
+  }
+
+  function csvEscape(value) {
+    const s = cleanText(value);
+    if (/[",\\n\\r]/.test(s)) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }
+
+  function visibleTables() {
+    return Array.from(document.querySelectorAll("table")).filter(function (table) {
+      return table.rows && table.rows.length > 0 && table.offsetParent !== null;
+    });
+  }
+
+  function nearbyHeading(table, fallback) {
+    let el = table;
+    for (let i = 0; i < 8 && el; i++) {
+      let prev = el.previousElementSibling;
+      while (prev) {
+        if (/^H[1-6]$/.test(prev.tagName)) return cleanText(prev.textContent);
+        const heading = prev.querySelector && prev.querySelector("h1,h2,h3,h4,h5,h6");
+        if (heading) return cleanText(heading.textContent);
+        prev = prev.previousElementSibling;
+      }
+      el = el.parentElement;
+    }
+    return fallback;
+  }
+
+  function reportFilename(ext) {
+    const title = cleanText(document.title || "netops-report")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "netops-report";
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    return title + "-" + stamp + "." + ext;
+  }
+
+  function exportCsv() {
+    const tables = visibleTables();
+    if (!tables.length) {
+      alert("No visible tables found on this page.");
+      return;
+    }
+
+    const rows = [];
+    rows.push(["NetOps Report", cleanText(document.title), window.location.href, new Date().toISOString()]);
+
+    tables.forEach(function (table, index) {
+      rows.push([]);
+      rows.push([nearbyHeading(table, "Table " + (index + 1))]);
+
+      Array.from(table.rows).forEach(function (tr) {
+        rows.push(Array.from(tr.cells).map(function (cell) {
+          return cleanText(cell.innerText || cell.textContent);
+        }));
+      });
+    });
+
+    const csv = rows.map(function (row) {
+      return row.map(csvEscape).join(",");
+    }).join("\\r\\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = reportFilename("csv");
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function printPdf() {
+    let meta = document.getElementById("netops-print-meta");
+    if (!meta) {
+      meta = document.createElement("div");
+      meta.id = "netops-print-meta";
+      document.body.insertBefore(meta, document.body.firstChild);
+    }
+
+    meta.innerHTML =
+      "<strong>NetOps Report</strong><br>" +
+      "Title: " + cleanText(document.title) + "<br>" +
+      "URL: " + window.location.href + "<br>" +
+      "Generated: " + new Date().toISOString();
+
+    window.print();
+  }
+
+  function copyReportLink() {
+    const url = window.location.href;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(function () {
+        alert("Report link copied.");
+      });
+    } else {
+      prompt("Copy report link:", url);
+    }
+  }
+
+  function installToolbar() {
+    if (document.getElementById("netops-export-toolbar")) return;
+
+    const bar = document.createElement("div");
+    bar.id = "netops-export-toolbar";
+    bar.className = "no-print";
+    bar.innerHTML =
+      '<button type="button" id="netops-export-csv">Download CSV</button>' +
+      '<button type="button" id="netops-export-pdf">Print / Save PDF</button>' +
+      '<button type="button" id="netops-copy-link">Copy Report Link</button>' +
+      '<span class="netops-export-note">Exports visible report tables from this page.</span>';
+
+    const target = document.querySelector("main, .container, .content, body");
+    if (target && target !== document.body) {
+      target.insertBefore(bar, target.firstChild);
+    } else {
+      document.body.insertBefore(bar, document.body.firstChild);
+    }
+
+    document.getElementById("netops-export-csv").addEventListener("click", exportCsv);
+    document.getElementById("netops-export-pdf").addEventListener("click", printPdf);
+    document.getElementById("netops-copy-link").addEventListener("click", copyReportLink);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", installToolbar);
+  } else {
+    installToolbar();
+  }
+})();
+</script>
+"""
+
+@app.middleware("http")
+async def _netops_export_tools_middleware(request, call_next):
+    response = await call_next(request)
+    content_type = response.headers.get("content-type", "")
+
+    if "text/html" not in content_type.lower():
+        return response
+
+    body = b""
+    async for chunk in response.body_iterator:
+        body += chunk
+
+    charset = getattr(response, "charset", None) or "utf-8"
+
+    try:
+        text = body.decode(charset, "replace")
+    except Exception:
+        return _NetOpsExportResponse(
+            content=body,
+            status_code=response.status_code,
+            headers={k: v for k, v in response.headers.items() if k.lower() != "content-length"},
+            media_type=response.media_type,
+        )
+
+    if "NETOPS_EXPORT_TOOLS_V1" not in text and "</body>" in text:
+        text = text.replace("</body>", _NETOPS_EXPORT_TOOLS_HTML + "</body>", 1)
+        body = text.encode(charset)
+
+    headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
+
+    return _NetOpsExportResponse(
+        content=body,
+        status_code=response.status_code,
+        headers=headers,
+        media_type=response.media_type,
+    )
