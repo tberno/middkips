@@ -1065,22 +1065,22 @@ def home():
       <style>
         /* NETOPS_HUB_CARD_STYLE_V1 */
         .hub-section-title {
-          margin: 1.1rem 0 0.65rem 0;
+          margin: .85rem 0 .45rem 0;
           font-size: 1.05rem;
           color: #ffffff;
         }
 
         .tool-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-          gap: 0.75rem;
+          grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+          gap: 0.55rem;
           margin-bottom: 0.5rem;
         }
 
         .tool-card {
           display: block;
-          min-height: 105px;
-          padding: 1rem;
+          min-height: 82px;
+          padding: .72rem .82rem;
           border: 1px solid rgba(100, 130, 150, 0.45);
           border-radius: 0.45rem;
           background: rgba(18, 32, 42, 0.95);
@@ -1096,7 +1096,7 @@ def home():
 
         .tool-card h3 {
           margin: 0 0 0.55rem 0;
-          font-size: 1.1rem;
+          font-size: 1rem;
           line-height: 1.2;
           color: #ffffff;
         }
@@ -1105,8 +1105,8 @@ def home():
           margin: 0;
           max-width: 42rem;
           color: #c6e8f8;
-          font-size: 0.9rem;
-          line-height: 1.35;
+          font-size: .84rem;
+          line-height: 1.28;
         }
       </style>
 
@@ -1121,6 +1121,18 @@ def home():
             <h3>SolidServer DDI</h3>
             <p>DNS, DHCP, IPAM, reservations, ranges, scopes, static records, and zones.</p>
           </a>
+
+          <a class="tool-card" href="/netops/tools/dns-tools?zone=middlebury.edu&amp;host=catalog.middlebury.edu&amp;servers=ns0245.secondary.cloudflare.com,ns0045.secondary.cloudflare.com&amp;types=SOA,NS,A">
+            <h3>DNS Tools</h3>
+            <p>Check SOA, NS, A, TXT, MX, AAAA, and authoritative/public resolver answers for domain troubleshooting.</p>
+          </a>
+
+          <a class="tool-card" href="/netops/tools/dns-domain-check?zone=middlebury.edu&amp;host=catalog.middlebury.edu">
+            <h3>DNS Domain Check</h3>
+            <p>Run parent delegation, Cloudflare authoritative, public resolver, and campus resolver checks in one report.</p>
+          </a>
+
+
           <a class="tool-card" href="/netops/reports/mac-table">
             <h3>MAC to Switch Port</h3>
             <p>Find where a MAC address is learned and map it back to switch, port, and VLAN.</p>
@@ -4747,3 +4759,661 @@ async def _netops_export_tools_middleware(request, call_next):
         headers=headers,
         media_type=response.media_type,
     )
+
+# NETOPS_NS_LOOKUP_TOOL_V1
+from fastapi.responses import HTMLResponse as _NetOpsHTMLResponse
+
+_DNS_QTYPES = {
+    "A": 1,
+    "NS": 2,
+    "CNAME": 5,
+    "SOA": 6,
+    "PTR": 12,
+    "MX": 15,
+    "TXT": 16,
+    "AAAA": 28,
+}
+
+_DNS_RCODE = {
+    0: "NOERROR",
+    1: "FORMERR",
+    2: "SERVFAIL",
+    3: "NXDOMAIN",
+    4: "NOTIMP",
+    5: "REFUSED",
+}
+
+def _netops_dns_escape(v):
+    import html
+    return html.escape("" if v is None else str(v))
+
+def _netops_dns_encode_name(name):
+    name = (name or "").strip().strip(".")
+    if not name:
+        return b"\x00"
+    out = b""
+    for part in name.split("."):
+        raw = part.encode("idna")
+        out += bytes([len(raw)]) + raw
+    return out + b"\x00"
+
+
+def _netops_dns_decode_label(raw):
+    try:
+        ascii_label = raw.decode("ascii", "strict")
+        return ascii_label.encode("ascii").decode("idna")
+    except Exception:
+        try:
+            return raw.decode("ascii", "replace")
+        except Exception:
+            return raw.hex()
+
+def _netops_dns_read_name(data, offset):
+    labels = []
+    jumped = False
+    original_offset = offset
+    jumps = 0
+
+    while True:
+        if offset >= len(data):
+            return "<bad-name>", original_offset if jumped else offset
+
+        length = data[offset]
+
+        if length & 0xC0 == 0xC0:
+            if offset + 1 >= len(data):
+                return "<bad-pointer>", original_offset if jumped else offset + 1
+            pointer = ((length & 0x3F) << 8) | data[offset + 1]
+            if not jumped:
+                original_offset = offset + 2
+            offset = pointer
+            jumped = True
+            jumps += 1
+            if jumps > 30:
+                return "<pointer-loop>", original_offset
+            continue
+
+        if length == 0:
+            offset += 1
+            return ".".join(labels) if labels else ".", original_offset if jumped else offset
+
+        offset += 1
+        labels.append(_netops_dns_decode_label(data[offset:offset + length]))
+        offset += length
+
+def _netops_dns_format_rdata(data, rstart, rdlen, rtype):
+    import socket
+    import struct
+
+    rend = rstart + rdlen
+    try:
+        if rtype == 1 and rdlen == 4:
+            return socket.inet_ntoa(data[rstart:rend])
+
+        if rtype == 28 and rdlen == 16:
+            return socket.inet_ntop(socket.AF_INET6, data[rstart:rend])
+
+        if rtype in (2, 5, 12):
+            name, _ = _netops_dns_read_name(data, rstart)
+            return name
+
+        if rtype == 6:
+            mname, off = _netops_dns_read_name(data, rstart)
+            rname, off = _netops_dns_read_name(data, off)
+            serial, refresh, retry, expire, minimum = struct.unpack("!IIIII", data[off:off + 20])
+            return f"{mname} {rname} serial={serial} refresh={refresh} retry={retry} expire={expire} minimum={minimum}"
+
+        if rtype == 15:
+            pref = struct.unpack("!H", data[rstart:rstart + 2])[0]
+            exchange, _ = _netops_dns_read_name(data, rstart + 2)
+            return f"{pref} {exchange}"
+
+        if rtype == 16:
+            chunks = []
+            off = rstart
+            while off < rend:
+                ln = data[off]
+                off += 1
+                chunks.append(data[off:off + ln].decode("utf-8", "replace"))
+                off += ln
+            return " ".join(chunks)
+
+        return data[rstart:rend].hex()
+    except Exception as exc:
+        return f"<parse-error: {exc}>"
+
+def _netops_dns_query(server, qname, qtype_name, timeout=3):
+    import random
+    import socket
+    import struct
+
+    qtype_name = qtype_name.upper()
+    qtype = _DNS_QTYPES.get(qtype_name)
+    if not qtype:
+        return [{"server": server, "name": qname, "type": qtype_name, "ttl": "", "value": "Unsupported type", "rcode": "ERROR"}]
+
+    tid = random.randint(0, 65535)
+    packet = struct.pack("!HHHHHH", tid, 0, 1, 0, 0, 0)
+    packet += _netops_dns_encode_name(qname)
+    packet += struct.pack("!HH", qtype, 1)
+
+    try:
+        addrinfo = socket.getaddrinfo(server, 53, 0, socket.SOCK_DGRAM)[0]
+        family = addrinfo[0]
+        address = addrinfo[4]
+
+        sock = socket.socket(family, socket.SOCK_DGRAM)
+        sock.settimeout(timeout)
+        sock.sendto(packet, address)
+        data, _ = sock.recvfrom(4096)
+        sock.close()
+    except Exception as exc:
+        return [{"server": server, "name": qname, "type": qtype_name, "ttl": "", "value": str(exc), "rcode": "ERROR"}]
+
+    try:
+        rid, flags, qdcount, ancount, nscount, arcount = struct.unpack("!HHHHHH", data[:12])
+        rcode = _DNS_RCODE.get(flags & 0x0F, str(flags & 0x0F))
+        truncated = bool(flags & 0x0200)
+        off = 12
+
+        for _ in range(qdcount):
+            _, off = _netops_dns_read_name(data, off)
+            off += 4
+
+        rows = []
+        total_rrs = ancount
+        for _ in range(total_rrs):
+            rr_name, off = _netops_dns_read_name(data, off)
+            rtype, rclass, ttl, rdlen = struct.unpack("!HHIH", data[off:off + 10])
+            off += 10
+            rstart = off
+            off += rdlen
+
+            value = _netops_dns_format_rdata(data, rstart, rdlen, rtype)
+            type_name = next((k for k, v in _DNS_QTYPES.items() if v == rtype), str(rtype))
+
+            rows.append({
+                "server": server,
+                "name": rr_name,
+                "type": type_name,
+                "ttl": ttl,
+                "value": value,
+                "rcode": rcode + (" TRUNCATED" if truncated else ""),
+            })
+
+        if not rows:
+            rows.append({"server": server, "name": qname, "type": qtype_name, "ttl": "", "value": "No answer", "rcode": rcode})
+
+        return rows
+    except Exception as exc:
+        return [{"server": server, "name": qname, "type": qtype_name, "ttl": "", "value": str(exc), "rcode": "PARSE_ERROR"}]
+
+@app.get("/tools/dns-tools", response_class=_NetOpsHTMLResponse)
+@app.get("/tools/ns-lookup", response_class=_NetOpsHTMLResponse)
+def tools_ns_lookup(
+    zone: str = "middlebury.edu",
+    host: str = "catalog.middlebury.edu",
+    servers: str = "ns0245.secondary.cloudflare.com, ns0045.secondary.cloudflare.com",
+    types: str = "SOA,NS,A",
+):
+    import re
+
+    server_list = [x.strip() for x in re.split(r"[\s,;]+", servers or "") if x.strip()]
+    type_list = [x.strip().upper() for x in re.split(r"[\s,;]+", types or "") if x.strip()]
+
+    if not server_list:
+        server_list = ["ns0245.secondary.cloudflare.com", "ns0045.secondary.cloudflare.com"]
+    if not type_list:
+        type_list = ["SOA", "NS", "A"]
+
+    rows = []
+    for server in server_list:
+        for qtype in type_list:
+            qname = zone if qtype in ("SOA", "NS") else (host or zone)
+            rows.extend(_netops_dns_query(server, qname, qtype))
+
+    table_rows = ""
+    for row in rows:
+        table_rows += (
+            "<tr>"
+            f"<td>{_netops_dns_escape(row.get('server'))}</td>"
+            f"<td>{_netops_dns_escape(row.get('name'))}</td>"
+            f"<td>{_netops_dns_escape(row.get('type'))}</td>"
+            f"<td>{_netops_dns_escape(row.get('ttl'))}</td>"
+            f"<td>{_netops_dns_escape(row.get('rcode'))}</td>"
+            f"<td style='font-family:monospace'>{_netops_dns_escape(row.get('value'))}</td>"
+            "</tr>"
+        )
+
+    body = f"""
+      <h1>DNS Tools</h1>
+      <p>Check authoritative nameservers and public resolvers for SOA, NS, A, AAAA, CNAME, MX, TXT, and delegation troubleshooting.</p>
+
+      <form method="get" action="/netops/tools/dns-tools" style="display:grid;grid-template-columns:160px 1fr;gap:.6rem;max-width:900px;margin:1rem 0;">
+        <label>Zone</label>
+        <input name="zone" value="{_netops_dns_escape(zone)}">
+
+        <label>Host / Record</label>
+        <input name="host" value="{_netops_dns_escape(host)}">
+
+        <label>Nameservers</label>
+        <input name="servers" value="{_netops_dns_escape(servers)}">
+
+        <label>Types</label>
+        <input name="types" value="{_netops_dns_escape(types)}">
+
+        <div></div>
+        <button type="submit">Run Lookup</button>
+      </form>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Server</th>
+            <th>Name</th>
+            <th>Type</th>
+            <th>TTL</th>
+            <th>Status</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {table_rows}
+        </tbody>
+      </table>
+    """
+    return layout("DNS Tools", body)
+
+
+
+# NETOPS_DNS_QUERY_SECTIONS_V2
+def _netops_dns_query_sections_v2(server, qname, qtype_name, recursion_desired=False, timeout=4):
+    import random
+    import socket
+    import struct
+
+    qtype_name = (qtype_name or "A").upper().strip()
+
+    qtypes = dict(_DNS_QTYPES)
+    qtypes.update({
+        "DS": 43,
+        "DNSKEY": 48,
+        "CAA": 257,
+    })
+
+    qtype = qtypes.get(qtype_name)
+    if not qtype:
+        return [{
+            "server": server,
+            "query": qname,
+            "query_type": qtype_name,
+            "section": "Error",
+            "name": qname,
+            "type": qtype_name,
+            "ttl": "",
+            "rcode": "ERROR",
+            "value": f"Unsupported query type {qtype_name}",
+        }]
+
+    tid = random.randint(0, 65535)
+    flags = 0x0100 if recursion_desired else 0x0000
+
+    packet = struct.pack("!HHHHHH", tid, flags, 1, 0, 0, 0)
+    packet += _netops_dns_encode_name(qname)
+    packet += struct.pack("!HH", qtype, 1)
+
+    try:
+        addrinfo = socket.getaddrinfo(server, 53, 0, socket.SOCK_DGRAM)[0]
+        family = addrinfo[0]
+        address = addrinfo[4]
+
+        sock = socket.socket(family, socket.SOCK_DGRAM)
+        sock.settimeout(timeout)
+        sock.sendto(packet, address)
+        data, _ = sock.recvfrom(8192)
+        sock.close()
+    except Exception as exc:
+        return [{
+            "server": server,
+            "query": qname,
+            "query_type": qtype_name,
+            "section": "Error",
+            "name": qname,
+            "type": qtype_name,
+            "ttl": "",
+            "rcode": "ERROR",
+            "value": str(exc),
+        }]
+
+    try:
+        rid, resp_flags, qdcount, ancount, nscount, arcount = struct.unpack("!HHHHHH", data[:12])
+
+        rcode = _DNS_RCODE.get(resp_flags & 0x0F, str(resp_flags & 0x0F))
+        aa = bool(resp_flags & 0x0400)
+        tc = bool(resp_flags & 0x0200)
+        ra = bool(resp_flags & 0x0080)
+
+        status = rcode
+        flags_out = []
+        if aa:
+            flags_out.append("AA")
+        if ra:
+            flags_out.append("RA")
+        if tc:
+            flags_out.append("TRUNCATED")
+        if flags_out:
+            status += " " + " ".join(flags_out)
+
+        off = 12
+
+        for _ in range(qdcount):
+            _, off = _netops_dns_read_name(data, off)
+            off += 4
+
+        reverse_types = dict(qtypes)
+        reverse_types.update(_DNS_QTYPES)
+
+        rows = []
+        section_defs = (
+            ("Answer", ancount),
+            ("Authority", nscount),
+            ("Additional", arcount),
+        )
+
+        for section_name, count in section_defs:
+            for _ in range(count):
+                rr_name, off = _netops_dns_read_name(data, off)
+                rtype, rclass, ttl, rdlen = struct.unpack("!HHIH", data[off:off + 10])
+                off += 10
+                rstart = off
+                off += rdlen
+
+                rr_type = next((k for k, v in reverse_types.items() if v == rtype), str(rtype))
+
+                if rtype == 257:
+                    raw = data[rstart:rstart + rdlen]
+                    try:
+                        flags_byte = raw[0]
+                        tag_len = raw[1]
+                        tag = raw[2:2 + tag_len].decode("ascii", "replace")
+                        value = raw[2 + tag_len:].decode("utf-8", "replace")
+                        rr_value = f'{flags_byte} {tag} "{value}"'
+                    except Exception:
+                        rr_value = raw.hex()
+                elif rtype == 43:
+                    rr_value = data[rstart:rstart + rdlen].hex()
+                else:
+                    rr_value = _netops_dns_format_rdata(data, rstart, rdlen, rtype)
+
+                rows.append({
+                    "server": server,
+                    "query": qname,
+                    "query_type": qtype_name,
+                    "section": section_name,
+                    "name": rr_name,
+                    "type": rr_type,
+                    "ttl": ttl,
+                    "rcode": status,
+                    "value": rr_value,
+                })
+
+        if not rows:
+            rows.append({
+                "server": server,
+                "query": qname,
+                "query_type": qtype_name,
+                "section": "None",
+                "name": qname,
+                "type": qtype_name,
+                "ttl": "",
+                "rcode": status,
+                "value": "No records returned",
+            })
+
+        return rows
+
+    except Exception as exc:
+        return [{
+            "server": server,
+            "query": qname,
+            "query_type": qtype_name,
+            "section": "Error",
+            "name": qname,
+            "type": qtype_name,
+            "ttl": "",
+            "rcode": "PARSE_ERROR",
+            "value": str(exc),
+        }]
+
+
+# NETOPS_DNS_DOMAIN_CHECK_V2
+@app.get("/tools/dns-domain-check", response_class=_NetOpsHTMLResponse)
+def tools_dns_domain_check(
+    zone: str = "middlebury.edu",
+    host: str = "catalog.middlebury.edu",
+    cf_servers: str = "ns0245.secondary.cloudflare.com,ns0045.secondary.cloudflare.com",
+    parent_servers: str = "a.edu-servers.net,h.edu-servers.net",
+    public_resolvers: str = "1.1.1.1,8.8.8.8,9.9.9.9,208.67.222.222",
+    campus_resolvers: str = "140.233.1.4,140.233.2.204",
+):
+    import re
+
+    def split_list(v):
+        return [x.strip() for x in re.split(r"[\s,;]+", v or "") if x.strip()]
+
+    def run_group(title, description, servers, checks, recursion_desired=False):
+        rows = []
+        for server in servers:
+            for qname, qtype in checks:
+                for r in _netops_dns_query_sections_v2(server, qname, qtype, recursion_desired=recursion_desired):
+                    r["group"] = title
+                    r["check"] = f"{qtype} {qname}"
+                    rows.append(r)
+
+        ok = sum(1 for r in rows if str(r.get("rcode", "")).startswith("NOERROR"))
+        issues = len(rows) - ok
+
+        trs = ""
+        for r in rows:
+            status_raw = str(r.get("rcode") or "")
+            code = status_raw.split()[0] if status_raw else "UNKNOWN"
+            if code == "NOERROR":
+                badge = '<span class="dns-badge ok">OK</span>'
+            elif code in ("NXDOMAIN", "SERVFAIL", "REFUSED", "ERROR", "PARSE_ERROR"):
+                badge = f'<span class="dns-badge bad">{_netops_dns_escape(code)}</span>'
+            else:
+                badge = f'<span class="dns-badge warn">{_netops_dns_escape(code)}</span>'
+
+            trs += (
+                "<tr>"
+                f"<td>{_netops_dns_escape(r.get('server'))}</td>"
+                f"<td>{_netops_dns_escape(r.get('check'))}</td>"
+                f"<td>{_netops_dns_escape(r.get('name'))}</td>"
+                f"<td class='dns-center'>{_netops_dns_escape(r.get('type'))}</td>"
+                f"<td class='dns-center'>{_netops_dns_escape(r.get('ttl'))}</td>"
+                f"<td>{badge}</td>"
+                f"<td class='dns-value'>{_netops_dns_escape(r.get('value'))}</td>"
+                "</tr>"
+            )
+
+        return f"""
+          <section class="dns-section">
+            <h2>{_netops_dns_escape(title)}</h2>
+            <p>{_netops_dns_escape(description)}</p>
+            <div class="dns-summary">
+              <span><b>Rows</b> {len(rows)}</span>
+              <span><b>OK</b> {ok}</span>
+              <span><b>Issues</b> {issues}</span>
+            </div>
+            <table class="dns-check-table">
+              <thead>
+                <tr>
+                  <th>Server</th>
+                  <th>Check</th>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th>TTL</th>
+                  <th>Status</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody>{trs}</tbody>
+            </table>
+          </section>
+        """
+
+    cf_list = split_list(cf_servers)
+    parent_list = split_list(parent_servers)
+    public_list = split_list(public_resolvers)
+    campus_list = split_list(campus_resolvers)
+
+    css = """
+      <style>
+        .dns-check-form {
+          display: grid;
+          grid-template-columns: 150px minmax(420px, 850px);
+          gap: .5rem .7rem;
+          max-width: 1050px;
+          margin: .8rem 0 1rem 0;
+          align-items: center;
+        }
+        .dns-check-form input { width: 100%; box-sizing: border-box; }
+        .dns-check-form button { grid-column: 2; }
+
+        .dns-section {
+          margin-top: .9rem;
+          border: 1px solid rgba(100,130,150,.35);
+          border-radius: .45rem;
+          background: rgba(18,32,42,.72);
+          padding: .75rem;
+        }
+        .dns-section h2 { margin: 0 0 .25rem 0; font-size: 1.05rem; }
+        .dns-section p { margin: 0 0 .45rem 0; color: #c6e8f8; }
+
+        .dns-summary {
+          display: flex;
+          flex-wrap: wrap;
+          gap: .45rem;
+          margin: .35rem 0 .45rem 0;
+        }
+        .dns-summary span {
+          border: 1px solid rgba(100,130,150,.4);
+          background: rgba(15,23,42,.55);
+          border-radius: .35rem;
+          padding: .25rem .45rem;
+          font-size: .8rem;
+          color: #d7f3ff;
+        }
+
+        .dns-check-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: .84rem;
+        }
+        .dns-check-table th {
+          text-align: left;
+          border-bottom: 1px solid rgba(100,130,150,.6);
+          padding: .35rem .45rem;
+          color: #fff;
+          white-space: nowrap;
+        }
+        .dns-check-table td {
+          border-bottom: 1px solid rgba(100,130,150,.22);
+          padding: .35rem .45rem;
+          vertical-align: top;
+        }
+        .dns-check-table tr:hover td { background: rgba(24,44,58,.65); }
+
+        .dns-center { text-align: center; white-space: nowrap; }
+        .dns-value {
+          font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+          word-break: break-word;
+        }
+        .dns-badge {
+          display: inline-block;
+          min-width: 52px;
+          text-align: center;
+          border-radius: 999px;
+          padding: .1rem .38rem;
+          font-size: .72rem;
+          font-weight: 700;
+        }
+        .dns-badge.ok { background: rgba(22,101,52,.85); color: #dcfce7; }
+        .dns-badge.warn { background: rgba(146,64,14,.85); color: #ffedd5; }
+        .dns-badge.bad { background: rgba(127,29,29,.9); color: #fee2e2; }
+      </style>
+    """
+
+    sections = ""
+
+    sections += run_group(
+        "1. Cloudflare authoritative secondary check",
+        "Direct SOA, NS, and host A checks against the Cloudflare secondary authoritative nameservers.",
+        cf_list,
+        [(zone, "SOA"), (zone, "NS"), (host, "A")],
+    )
+
+    sections += run_group(
+        "2. Parent delegation check",
+        "Direct NS checks against the .edu parent nameservers. Delegation records usually appear in the Authority section; this is the dig @a.edu-servers.net NS middlebury.edu style check.",
+        parent_list,
+        [(zone, "NS")],
+    )
+
+    sections += run_group(
+        "3. Public recursive resolver NS propagation",
+        "NS checks against public recursive resolvers: Cloudflare, Google, Quad9, and OpenDNS.",
+        public_list,
+        [(zone, "NS")],
+        recursion_desired=True,
+    )
+
+    sections += run_group(
+        "4. Public recursive host resolution",
+        "Host A checks against public recursive resolvers. For catalog.middlebury.edu, these should return Cloudflare edge IPs.",
+        public_list,
+        [(host, "A")],
+        recursion_desired=True,
+    )
+
+    sections += run_group(
+        "5. Campus resolver comparison",
+        "Campus/internal resolver comparison against campus DNS servers. These answers may intentionally differ from public DNS because of split-horizon DNS.",
+        campus_list,
+        [(zone, "NS"), (host, "A")],
+        recursion_desired=True,
+    )
+
+    body = f"""
+      <h1>DNS Domain Check</h1>
+      <p>Runs the cutover checks we have been using: Cloudflare authoritative, parent delegation, public resolver propagation, host resolution, and campus resolver comparison.</p>
+
+      {css}
+
+      <form class="dns-check-form" method="get" action="/netops/tools/dns-domain-check">
+        <label>Zone</label>
+        <input name="zone" value="{_netops_dns_escape(zone)}">
+
+        <label>Host / Record</label>
+        <input name="host" value="{_netops_dns_escape(host)}">
+
+        <label>Cloudflare NS</label>
+        <input name="cf_servers" value="{_netops_dns_escape(cf_servers)}">
+
+        <label>Parent servers</label>
+        <input name="parent_servers" value="{_netops_dns_escape(parent_servers)}">
+
+        <label>Public resolvers</label>
+        <input name="public_resolvers" value="{_netops_dns_escape(public_resolvers)}">
+
+        <label>Campus resolvers</label>
+        <input name="campus_resolvers" value="{_netops_dns_escape(campus_resolvers)}">
+
+        <div></div>
+        <button type="submit">Run Domain Check</button>
+      </form>
+
+      {sections}
+    """
+
+    return layout("DNS Domain Check", body)
