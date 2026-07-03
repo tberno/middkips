@@ -1,17 +1,29 @@
+import time
+import json
+import ssl
+import re
+import shutil
+import subprocess
+import urllib.error
+import urllib.request
+import urllib.parse
 import html
 import os
 import socket
+AKIPS_UNUSED_CACHE_FILE = os.getenv("AKIPS_UNUSED_CACHE_FILE", "/data/akips_unused_cache.json")
 from typing import Any
 from urllib.parse import quote_plus
 
 import pymysql
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 
 APP_NAME = os.getenv("PORTAL_NAME", "MiddKIPS")
+APP_ROOT_PATH = os.getenv("APP_ROOT_PATH", "").rstrip("/")
 LIBRENMS_BASE_URL = os.getenv("LIBRENMS_BASE_URL", "https://nms.jestertek.cc").rstrip("/")
 OXIDIZED_BASE_URL = os.getenv("OXIDIZED_BASE_URL", "https://nms.jestertek.cc/oxidized").rstrip("/")
+UNUSED_CACHE_FILE = os.getenv("UNUSED_CACHE_FILE", "/data/unused_interfaces_cache.json")
 
 
 def h(value: Any) -> str:
@@ -372,7 +384,11 @@ def layout(title: str, body: str) -> str:
       gap:10px;
       grid-template-columns:330px 330px minmax(0,1fr);
     }}
-    .switch-layout {{
+    
+.switch-main.hide-device-col table.report th:first-child,
+.switch-main.hide-device-col table.report td:first-child {{ display:none; }}
+
+.switch-layout {{
       display:grid;
       gap:10px;
       grid-template-columns:230px minmax(0,1fr);
@@ -590,10 +606,7 @@ def layout(title: str, body: str) -> str:
 
   
     /* In AKIPS two-column mode, device identity lives in the left selector */
-    .switch-main table.report th:first-child,
-    .switch-main table.report td:first-child {{
-      display:none;
-    }}
+    
 
   </style>
 </head>
@@ -601,12 +614,14 @@ def layout(title: str, body: str) -> str:
 <header class="topbar">
   <div class="brand"><a href="/">MiddKIPS</a></div>
   <nav>
-    <a href="/">Home</a>
+    <a href="/dashboard">Dashboard</a>
     <a href="/devices">Devices</a>
     <a href="/reports/interface-configuration">Interface Configuration</a>
     <a href="/reports/interface-statistics">Interface Statistics</a>
+    <a href="/reports/unused-interfaces">Unused</a>
     <a href="/reports/mac-table">MAC Table</a>
     <a href="/reports/arp-ip">ARP/IP</a>
+    <a href="/tools/solidserver">SolidServer</a>
     <a href="/reports/vlans">VLANs</a>
     <a href="/reports/changes">Changes</a>
     <a href="/reports/events">Events</a>
@@ -639,8 +654,29 @@ document.addEventListener("DOMContentLoaded", function () {{
   if (el && saved !== null) el.scrollTop = parseInt(saved, 10) || 0;
 }});
 
+function middkipsRootPath() {{
+  return "{h(APP_ROOT_PATH)}";
+}}
+
+function stripMiddkipsRoot(path) {{
+  var root = middkipsRootPath();
+  if (!root) return path;
+  if (path === root) return "/";
+  if (path.indexOf(root + "/") === 0) return path.slice(root.length) || "/";
+  return path;
+}}
+
+function addMiddkipsRoot(path) {{
+  var root = middkipsRootPath();
+  if (!root) return path;
+  path = stripMiddkipsRoot(path);
+  if (path === "/") return root + "/";
+  return root + path;
+}}
+
 function isSelectionPath(path) {{
-  return path === "/devices" || path.indexOf("/reports/") === 0;
+  path = stripMiddkipsRoot(path);
+  return path === "/dashboard" || path === "/devices" || path.indexOf("/reports/") === 0;
 }}
 
 function clearSelectedSwitches() {{
@@ -683,7 +719,7 @@ function syncSelectedSwitches() {{
       linkUrl.searchParams.delete("device_ids");
     }}
 
-    link.setAttribute("href", linkUrl.pathname + linkUrl.search + linkUrl.hash);
+    link.setAttribute("href", addMiddkipsRoot(linkUrl.pathname) + linkUrl.search + linkUrl.hash);
   }});
 }}
 
@@ -1005,53 +1041,766 @@ def devices(q: str = "", device_ids: str = ""):
         </section>
         """
 
-    return layout("Devices", two_col("/devices", selected_ids, q, body))
+    return layout("Devices", two_col("/dashboard", selected_ids, q, body))
 
+
+
+
+
+
+
+
+def _device_diag_record(device_id: int) -> dict:
+    return fetch_one("""
+        SELECT
+            d.*,
+            COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device,
+            INET6_NTOA(d.ip) AS ip_addr
+        FROM devices d
+        WHERE d.device_id = %s
+    """, (device_id,))
+
+
+def _diag_display_name(dev: dict) -> str:
+    if not dev:
+        return ""
+    return device_label(dev) or dev.get("sysName") or dev.get("hostname") or dev.get("ip_addr") or str(dev.get("device_id"))
+
+
+def _diag_layout(title: str, device_id: int, q: str, device_ids: str, body: str):
+    selected_ids = selected_device_ids(device_ids)
+    if device_id not in selected_ids:
+        selected_ids = [device_id] + selected_ids
+    return layout(title, two_col("/dashboard", selected_ids, q, body))
+
+
+@app.get("/device/{device_id}/config.txt")
+def download_device_config(device_id: int):
+    import os
+    import re
+    import socket
+    from urllib.parse import quote
+
+    import pymysql
+    import requests
+    from fastapi.responses import PlainTextResponse, Response
+
+    def fail(status_code, message):
+        return PlainTextResponse(str(message).rstrip() + "\n", status_code=status_code)
+
+    def env_value(*names, default=None):
+        for name in names:
+            value = os.environ.get(name)
+            if value not in (None, ""):
+                return value
+        return default
+
+    def db_lookup_device(dev_id):
+        sql = """
+            SELECT device_id, hostname, sysName, os, type
+            FROM devices
+            WHERE device_id = %s
+            LIMIT 1
+        """
+
+        host = env_value("LIBRENMS_DB_HOST", "DB_HOST", "MYSQL_HOST", default="db")
+        user = env_value("LIBRENMS_DB_USER", "DB_USER", "MYSQL_USER", default="librenms")
+        password = env_value("LIBRENMS_DB_PASS", "LIBRENMS_DB_PASSWORD", "DB_PASS", "DB_PASSWORD", "MYSQL_PASSWORD")
+        database = env_value("LIBRENMS_DB_NAME", "DB_NAME", "MYSQL_DATABASE", default="librenms")
+        port = int(env_value("LIBRENMS_DB_PORT", "DB_PORT", "MYSQL_PORT", default="3306"))
+
+        conn = pymysql.connect(
+            host=host,
+            user=user,
+            password=password,
+            database=database,
+            port=port,
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=5,
+            read_timeout=10,
+            write_timeout=10,
+        )
+
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, (dev_id,))
+                return cur.fetchone()
+        finally:
+            conn.close()
+
+    def resolve_ipv4(value):
+        value = str(value or "").strip()
+        if not value:
+            return None
+
+        if re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", value):
+            return value
+
+        candidates = [value]
+        if "." not in value:
+            candidates.append(value + ".middlebury.edu")
+
+        for name in candidates:
+            try:
+                answers = socket.getaddrinfo(name, None, socket.AF_INET)
+                for answer in answers:
+                    ip = answer[4][0]
+                    if ip:
+                        return ip
+            except Exception:
+                pass
+
+        return None
+
+    try:
+        device = db_lookup_device(device_id)
+    except Exception as exc:
+        return fail(500, f"LibreNMS device lookup failed for device_id={device_id}: {exc}")
+
+    if not device:
+        return fail(404, f"No LibreNMS device found for device_id={device_id}")
+
+    hostname = device.get("hostname")
+    sysname = device.get("sysName")
+
+    mgmt_ip = None
+    resolved_from = None
+
+    for candidate in [hostname, sysname]:
+        mgmt_ip = resolve_ipv4(candidate)
+        if mgmt_ip:
+            resolved_from = candidate
+            break
+
+    if not mgmt_ip:
+        return fail(
+            404,
+            f"Could not resolve management IP for device_id={device_id}; hostname={hostname} sysName={sysname}",
+        )
+
+    oxidized_url = env_value("OXIDIZED_URL", default="http://127.0.0.1:8888").rstrip("/")
+
+    try:
+        nodes_resp = requests.get(f"{oxidized_url}/nodes.json", timeout=10)
+    except Exception as exc:
+        return fail(502, f"Could not reach Oxidized nodes.json: {exc}")
+
+    if nodes_resp.status_code != 200:
+        return fail(502, f"Oxidized nodes.json returned HTTP {nodes_resp.status_code}")
+
+    try:
+        nodes = nodes_resp.json()
+    except Exception as exc:
+        return fail(502, f"Could not parse Oxidized nodes.json: {exc}")
+
+    if isinstance(nodes, dict):
+        nodes = nodes.get("nodes") or nodes.get("data") or []
+
+    match = None
+
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+
+        for value in [node.get("name"), node.get("ip")]:
+            if str(value or "").strip() == mgmt_ip:
+                match = node
+                break
+
+        if match:
+            break
+
+    if not match:
+        return fail(
+            404,
+            f"No Oxidized node matched device_id={device_id}; resolved_from={resolved_from} mgmt_ip={mgmt_ip}",
+        )
+
+    node_name = str(match.get("name") or match.get("ip") or mgmt_ip)
+    group = match.get("group")
+
+    full_name = str(match.get("full_name") or "")
+    if not group and "/" in full_name:
+        group = full_name.split("/", 1)[0]
+
+    if not group:
+        return fail(502, f"Matched Oxidized node has no group: {match}")
+
+    fetch_url = f"{oxidized_url}/node/fetch/{quote(str(group), safe='')}/{quote(node_name, safe='')}"
+
+    try:
+        config_resp = requests.get(fetch_url, timeout=20)
+    except Exception as exc:
+        return fail(502, f"Could not fetch Oxidized config from {fetch_url}: {exc}")
+
+    body = config_resp.content or b""
+    body_text = body.decode("utf-8", errors="replace")
+
+    if config_resp.status_code != 200:
+        return fail(502, f"Oxidized config fetch returned HTTP {config_resp.status_code} for {group}/{node_name}")
+
+    if "unable to find" in body_text.lower():
+        return fail(404, body_text)
+
+    if len(body) < 100:
+        return fail(502, f"Oxidized config fetch returned suspiciously small body: bytes={len(body)} group={group} node={node_name}")
+
+    filename_base = str(hostname or node_name or f"device-{device_id}")
+    filename_base = re.sub(r"[^A-Za-z0-9._-]+", "_", filename_base).strip("_")
+    if not filename_base:
+        filename_base = f"device-{device_id}"
+
+    return Response(
+        content=body,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename_base}.txt"'},
+    )
+
+    import os
+    import re
+    import socket
+    from urllib.parse import quote
+
+    import pymysql
+    import requests
+    from fastapi.responses import PlainTextResponse, Response
+
+    def fail(status_code, message):
+        return PlainTextResponse(str(message).rstrip() + "\n", status_code=status_code)
+
+    def env_value(*names, default=None):
+        for name in names:
+            value = os.environ.get(name)
+            if value not in (None, ""):
+                return value
+        return default
+
+    def db_lookup_device(dev_id):
+        sql = """
+            SELECT device_id, hostname, sysName, os, type
+            FROM devices
+            WHERE device_id = %s
+            LIMIT 1
+        """
+
+        host = env_value("LIBRENMS_DB_HOST", "DB_HOST", "MYSQL_HOST", default="db")
+        user = env_value("LIBRENMS_DB_USER", "DB_USER", "MYSQL_USER", default="librenms")
+        password = env_value("LIBRENMS_DB_PASS", "LIBRENMS_DB_PASSWORD", "DB_PASS", "DB_PASSWORD", "MYSQL_PASSWORD")
+        database = env_value("LIBRENMS_DB_NAME", "DB_NAME", "MYSQL_DATABASE", default="librenms")
+        port = int(env_value("LIBRENMS_DB_PORT", "DB_PORT", "MYSQL_PORT", default="3306"))
+
+        conn = pymysql.connect(
+            host=host,
+            user=user,
+            password=password,
+            database=database,
+            port=port,
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=5,
+            read_timeout=10,
+            write_timeout=10,
+        )
+
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, (dev_id,))
+                return cur.fetchone()
+        finally:
+            conn.close()
+
+    def resolve_ipv4(value):
+        value = str(value or "").strip()
+        if not value:
+            return None
+
+        if re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", value):
+            return value
+
+        candidates = [value]
+        if "." not in value:
+            candidates.append(value + ".middlebury.edu")
+
+        for name in candidates:
+            try:
+                answers = socket.getaddrinfo(name, None, socket.AF_INET)
+                for answer in answers:
+                    ip = answer[4][0]
+                    if ip:
+                        return ip
+            except Exception:
+                pass
+
+        return None
+
+    try:
+        device = db_lookup_device(device_id)
+    except Exception as exc:
+        return fail(500, f"LibreNMS device lookup failed for device_id={device_id}: {exc}")
+
+    if not device:
+        return fail(404, f"No LibreNMS device found for device_id={device_id}")
+
+    hostname = device.get("hostname")
+    sysname = device.get("sysName")
+
+    mgmt_ip = None
+    resolved_from = None
+
+    for candidate in [hostname, sysname]:
+        mgmt_ip = resolve_ipv4(candidate)
+        if mgmt_ip:
+            resolved_from = candidate
+            break
+
+    if not mgmt_ip:
+        return fail(
+            404,
+            f"Could not resolve management IP for device_id={device_id}; hostname={hostname} sysName={sysname}",
+        )
+
+    oxidized_url = env_value("OXIDIZED_URL", default="http://127.0.0.1:8888").rstrip("/")
+
+    try:
+        nodes_resp = requests.get(f"{oxidized_url}/nodes.json", timeout=10)
+    except Exception as exc:
+        return fail(502, f"Could not reach Oxidized nodes.json: {exc}")
+
+    if nodes_resp.status_code != 200:
+        return fail(502, f"Oxidized nodes.json returned HTTP {nodes_resp.status_code}")
+
+    try:
+        nodes = nodes_resp.json()
+    except Exception as exc:
+        return fail(502, f"Could not parse Oxidized nodes.json: {exc}")
+
+    if isinstance(nodes, dict):
+        nodes = nodes.get("nodes") or nodes.get("data") or []
+
+    match = None
+
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+
+        for value in [node.get("name"), node.get("ip")]:
+            if str(value or "").strip() == mgmt_ip:
+                match = node
+                break
+
+        if match:
+            break
+
+    if not match:
+        return fail(
+            404,
+            f"No Oxidized node matched device_id={device_id}; resolved_from={resolved_from} mgmt_ip={mgmt_ip}",
+        )
+
+    node_name = str(match.get("name") or match.get("ip") or mgmt_ip)
+    group = match.get("group")
+
+    full_name = str(match.get("full_name") or "")
+    if not group and "/" in full_name:
+        group = full_name.split("/", 1)[0]
+
+    if not group:
+        return fail(502, f"Matched Oxidized node has no group: {match}")
+
+    fetch_url = f"{oxidized_url}/node/fetch/{quote(str(group), safe='')}/{quote(node_name, safe='')}"
+
+    try:
+        config_resp = requests.get(fetch_url, timeout=20)
+    except Exception as exc:
+        return fail(502, f"Could not fetch Oxidized config from {fetch_url}: {exc}")
+
+    body = config_resp.content or b""
+    body_text = body.decode("utf-8", errors="replace")
+
+    if config_resp.status_code != 200:
+        return fail(502, f"Oxidized config fetch returned HTTP {config_resp.status_code} for {group}/{node_name}")
+
+    if "unable to find" in body_text.lower():
+        return fail(404, body_text)
+
+    if len(body) < 100:
+        return fail(502, f"Oxidized config fetch returned suspiciously small body: bytes={len(body)} group={group} node={node_name}")
+
+    filename_base = str(hostname or node_name or f"device-{device_id}")
+    filename_base = re.sub(r"[^A-Za-z0-9._-]+", "_", filename_base).strip("_")
+    if not filename_base:
+        filename_base = f"device-{device_id}"
+
+    return Response(
+        content=body,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename_base}.txt"'},
+    )
+
+    try:
+        dev = _device_diag_record(device_id)
+        if not dev:
+            return Response("Device not found\n", status_code=404, media_type="text/plain")
+
+        node_candidates = []
+        for val in (dev.get("sysName"), dev.get("hostname"), dev.get("device"), dev.get("ip_addr")):
+            if val:
+                sval = str(val).strip()
+                if sval and sval not in node_candidates:
+                    node_candidates.append(sval)
+
+        base_candidates = []
+        for base in (
+            os.getenv("OXIDIZED_INTERNAL_URL", "").rstrip("/"),
+            OXIDIZED_BASE_URL.rstrip("/") if OXIDIZED_BASE_URL else "",
+            "http://127.0.0.1:8888",
+            "http://localhost:8888",
+        ):
+            if base and base not in base_candidates:
+                base_candidates.append(base)
+
+        errors = []
+        context = ssl._create_unverified_context()
+
+        for base in base_candidates:
+            for node in node_candidates:
+                qnode = urllib.parse.quote(node, safe="")
+                urls = [
+                    f"{base}/node/fetch/{qnode}",
+                    f"{base}/node/fetch/default/{qnode}",
+                    f"{base}/node/show/{qnode}",
+                    f"{base}/node/show/default/{qnode}",
+                ]
+
+                for url in urls:
+                    try:
+                        req = urllib.request.Request(url, headers={"User-Agent": "MiddKIPS config downloader"})
+                        with urllib.request.urlopen(req, timeout=12, context=context) as resp:
+                            data = resp.read()
+
+                        preview = data[:300].lower()
+                        if b"<html" in preview or b"<!doctype" in preview:
+                            errors.append(f"{url}: returned HTML, not config text")
+                            continue
+
+                        if not data.strip():
+                            errors.append(f"{url}: empty response")
+                            continue
+
+                        filename = f"{node}.txt".replace("/", "_").replace("\\", "_")
+                        return Response(
+                            data,
+                            media_type="text/plain",
+                            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+                        )
+                    except Exception as exc:
+                        errors.append(f"{url}: {exc}")
+
+        return Response(
+            "Unable to fetch config from Oxidized.\n\n"
+            + "Nodes tried:\n"
+            + "\n".join(f"- {x}" for x in node_candidates)
+            + "\n\nBases tried:\n"
+            + "\n".join(f"- {x}" for x in base_candidates)
+            + "\n\nErrors:\n"
+            + "\n".join(errors[-30:])
+            + "\n",
+            status_code=404,
+            media_type="text/plain",
+        )
+
+    except Exception as exc:
+        return Response(f"Config download error: {exc}\n", status_code=500, media_type="text/plain")
+
+
+@app.get("/device/{device_id}/ping", response_class=HTMLResponse)
+def device_ping(device_id: int, q: str = "", device_ids: str = "", count: int = 4):
+    dev = _device_diag_record(device_id)
+    if not dev:
+        return layout("Device not found", "<section class='panel'><h1>Device not found</h1></section>")
+
+    display_name = _diag_display_name(dev)
+    target = dev.get("ip_addr") or dev.get("hostname") or dev.get("device")
+    count = max(1, min(int(count or 4), 10))
+
+    if not shutil.which("ping"):
+        rc = 1
+        output = "ping is not installed in the MiddKIPS container."
+    else:
+        cmd = ["ping", "-c", str(count), "-W", "2", str(target)]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=(count * 3) + 5)
+            rc = proc.returncode
+            output = (proc.stdout or "") + (proc.stderr or "")
+        except subprocess.TimeoutExpired as exc:
+            rc = 124
+            output = f"Ping timed out after {exc.timeout} seconds."
+
+    body = f"""
+<section class="panel">
+  <div class="panel-head">
+    <h1>Ping: {h(display_name)}</h1>
+    <div class="actions">
+      <a class="button" href="/device/{h(device_id)}">Dashboard</a>
+      <a class="button" href="/device/{h(device_id)}/ping">Ping Again</a>
+      <a class="button" href="/device/{h(device_id)}/snmpwalk">SNMP Walk</a>
+    </div>
+  </div>
+  <p><strong>Target:</strong> {h(target)} &nbsp; <strong>Status:</strong> {h('OK' if rc == 0 else 'Exit ' + str(rc))}</p>
+  <pre style="white-space:pre-wrap;background:#0d1117;border:1px solid var(--border);padding:10px;border-radius:6px;overflow:auto;max-height:650px;">{h(output)}</pre>
+</section>
+"""
+    return _diag_layout(f"Ping {display_name}", device_id, q, device_ids, body)
+
+
+def _snmp_v3_command(dev: dict, target: str, oid: str):
+    authlevel = str(dev.get("authlevel") or "").strip()
+    authname = dev.get("authname") or dev.get("security_name") or dev.get("secname")
+    authalgo = str(dev.get("authalgo") or "SHA").upper()
+    authpass = dev.get("authpass") or dev.get("auth_pass")
+    cryptoalgo = str(dev.get("cryptoalgo") or "AES").upper()
+    cryptopass = dev.get("cryptopass") or dev.get("crypto_pass")
+
+    if not authlevel:
+        if authpass and cryptopass:
+            authlevel = "authPriv"
+        elif authpass:
+            authlevel = "authNoPriv"
+        else:
+            authlevel = "noAuthNoPriv"
+
+    if not authname:
+        return None, "SNMPv3 authname/security name is missing in LibreNMS for this device."
+
+    cmd = ["snmpwalk", "-v3", "-l", authlevel, "-u", str(authname), "-On", "-t", "3", "-r", "1"]
+
+    if authlevel.lower() in ("authnopriv", "authpriv"):
+        if not authpass:
+            return None, "SNMPv3 auth password is missing in LibreNMS for this device."
+        cmd += ["-a", authalgo, "-A", str(authpass)]
+
+    if authlevel.lower() == "authpriv":
+        if not cryptopass:
+            return None, "SNMPv3 privacy password is missing in LibreNMS for this device."
+        cmd += ["-x", cryptoalgo, "-X", str(cryptopass)]
+
+    cmd += [target, oid]
+    return cmd, None
+
+
+@app.get("/device/{device_id}/snmpwalk", response_class=HTMLResponse)
+def device_snmpwalk(device_id: int, q: str = "", device_ids: str = "", oid: str = "1.3.6.1.2.1.1", max_lines: int = 300):
+    dev = _device_diag_record(device_id)
+    if not dev:
+        return layout("Device not found", "<section class='panel'><h1>Device not found</h1></section>")
+
+    display_name = _diag_display_name(dev)
+    target_ip = dev.get("ip_addr") or dev.get("hostname") or dev.get("device")
+    snmpver = str(dev.get("snmpver") or "v2c").lower().replace("v", "")
+    community = dev.get("community")
+    port = int(dev.get("port") or 161)
+    transport = str(dev.get("transport") or "udp").lower()
+    oid = oid.strip() or "1.3.6.1.2.1.1"
+    max_lines = max(25, min(int(max_lines or 300), 1000))
+
+    if not re.match(r"^[0-9.]+$", oid):
+        oid = "1.3.6.1.2.1.1"
+
+    target = f"{transport}:{target_ip}:{port}"
+
+    if not shutil.which("snmpwalk"):
+        rc = 1
+        output = "snmpwalk is not installed in the MiddKIPS container."
+    elif not target_ip:
+        rc = 1
+        output = "No IP or hostname found for this device."
+    else:
+        if snmpver in ("1", "2", "2c"):
+            if not community:
+                cmd = None
+                err = "No SNMP community found in LibreNMS for this v1/v2c device."
+            else:
+                cmd = ["snmpwalk", "-v", "2c" if snmpver in ("2", "2c") else "1", "-c", str(community), "-On", "-t", "3", "-r", "1", target, oid]
+                err = None
+        elif snmpver == "3":
+            cmd, err = _snmp_v3_command(dev, target, oid)
+        else:
+            cmd = None
+            err = f"Unsupported SNMP version: {snmpver}"
+
+        if not cmd:
+            rc = 1
+            output = err
+        else:
+            safe_cmd = []
+            skip_next = False
+            for i, part in enumerate(cmd):
+                if skip_next:
+                    safe_cmd.append("REDACTED")
+                    skip_next = False
+                    continue
+                safe_cmd.append(part)
+                if part in ("-c", "-A", "-X"):
+                    skip_next = True
+
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                rc = proc.returncode
+                raw = (proc.stdout or "") + (proc.stderr or "")
+                lines = raw.splitlines()
+                if len(lines) > max_lines:
+                    raw = "\n".join(lines[:max_lines]) + f"\n... truncated at {max_lines} lines ..."
+                output = "$ " + " ".join(safe_cmd) + "\n\n" + raw
+            except subprocess.TimeoutExpired as exc:
+                rc = 124
+                output = f"SNMP walk timed out after {exc.timeout} seconds."
+
+    body = f"""
+<section class="panel">
+  <div class="panel-head">
+    <h1>SNMP Walk: {h(display_name)}</h1>
+    <div class="actions">
+      <a class="button" href="/device/{h(device_id)}">Dashboard</a>
+      <a class="button" href="/device/{h(device_id)}/ping">Ping</a>
+      <a class="button" href="/device/{h(device_id)}/snmpwalk?oid=1.3.6.1.2.1.1">System</a>
+      <a class="button" href="/device/{h(device_id)}/snmpwalk?oid=1.3.6.1.2.1.2">Interfaces</a>
+    </div>
+  </div>
+  <p><strong>Target:</strong> {h(target_ip)} &nbsp; <strong>OID:</strong> {h(oid)} &nbsp; <strong>Status:</strong> {h('OK' if rc == 0 else 'Exit ' + str(rc))}</p>
+  <form method="get" action="/device/{h(device_id)}/snmpwalk" style="margin-bottom:10px;">
+    <input name="oid" value="{h(oid)}" style="width:320px;" />
+    <button type="submit">Walk OID</button>
+  </form>
+  <pre style="white-space:pre-wrap;background:#0d1117;border:1px solid var(--border);padding:10px;border-radius:6px;overflow:auto;max-height:650px;">{h(output)}</pre>
+</section>
+"""
+    return _diag_layout(f"SNMP Walk {display_name}", device_id, q, device_ids, body)
 
 @app.get("/device/{device_id}", response_class=HTMLResponse)
-def device(device_id: int):
+def device(device_id: int, q: str = "", device_ids: str = ""):
     dev = fetch_one("""
-        SELECT device_id, COALESCE(NULLIF(sysName,''), NULLIF(hostname,''), INET6_NTOA(ip)) AS friendly_name, hostname, INET6_NTOA(ip) AS ip_addr, os, hardware, version, location_id AS location, status, uptime, last_polled
-        FROM devices
-        WHERE device_id = %s
+        SELECT
+            d.device_id,
+            COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device,
+            COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS friendly_name,
+            d.hostname,
+            d.sysName,
+            INET6_NTOA(d.ip) AS ip_addr,
+            d.os,
+            d.hardware,
+            d.version,
+            d.location_id AS location,
+            d.status,
+            d.uptime,
+            d.last_polled
+        FROM devices d
+        WHERE d.device_id = %s
     """, (device_id,))
 
     if not dev:
         return layout("Not found", "<section class='panel'><h1>Device not found</h1></section>")
 
+    display_name = dev.get("friendly_name") or dev.get("sysName") or dev.get("hostname") or dev.get("ip_addr") or str(device_id)
+
+    # Match the left switch selector label when possible.
+    try:
+        for catalog_row in device_catalog():
+            if str(catalog_row.get("device_id")) == str(device_id):
+                catalog_label = device_label(catalog_row)
+                if catalog_label:
+                    display_name = catalog_label
+                break
+    except Exception:
+        pass
+
+    dev["device"] = display_name
+
     ports = safe_query("""
-        SELECT p.*, CASE
-            WHEN p.ifLastChange IS NULL OR p.ifLastChange = 0 OR d.uptime IS NULL OR d.last_polled IS NULL THEN NULL
-            ELSE DATE_SUB(d.last_polled, INTERVAL CAST(GREATEST(d.uptime - (p.ifLastChange / 100), 0) AS UNSIGNED) SECOND)
-        END AS ifLastChange_at, COALESCE(f.mac_count, 0) AS mac_count
+        SELECT
+            p.*,
+            CASE
+                WHEN p.ifLastChange IS NULL OR p.ifLastChange = 0 OR d.uptime IS NULL OR d.last_polled IS NULL THEN NULL
+                ELSE DATE_SUB(d.last_polled, INTERVAL CAST(GREATEST(d.uptime - (p.ifLastChange / 100), 0) AS UNSIGNED) SECOND)
+            END AS ifLastChange_at,
+            COALESCE(f.mac_count, 0) AS mac_count
         FROM ports p
+        JOIN devices d ON d.device_id = p.device_id
         LEFT JOIN (
             SELECT port_id, COUNT(*) AS mac_count
             FROM ports_fdb
             GROUP BY port_id
         ) f ON f.port_id = p.port_id
         WHERE p.device_id = %s
-        ORDER BY p.ifName
+        ORDER BY
+            CASE WHEN p.ifName REGEXP '^[a-zA-Z]+-[0-9]+/[0-9]+/[0-9]+' THEN 0 ELSE 1 END,
+            p.ifName
     """, (device_id,))
 
-    cpu = safe_query("SELECT processor_descr AS descr, processor_usage AS pct FROM processors WHERE device_id = %s ORDER BY processor_usage DESC LIMIT 8", (device_id,))
-    mem = safe_query("SELECT mempool_descr AS descr, mempool_perc AS pct FROM mempools WHERE device_id = %s ORDER BY mempool_perc DESC LIMIT 8", (device_id,))
-    storage = safe_query("SELECT storage_descr AS descr, storage_perc AS pct FROM storage WHERE device_id = %s ORDER BY storage_perc DESC LIMIT 8", (device_id,))
-    events = safe_query("SELECT datetime, type, severity, message FROM eventlog WHERE device_id = %s ORDER BY datetime DESC LIMIT 8", (device_id,))
+    cpu = safe_query("""
+        SELECT processor_descr AS descr, processor_usage AS pct
+        FROM processors
+        WHERE device_id = %s
+        ORDER BY processor_usage DESC
+        LIMIT 12
+    """, (device_id,))
+
+    mem = safe_query("""
+        SELECT mempool_descr AS descr, mempool_perc AS pct
+        FROM mempools
+        WHERE device_id = %s
+        ORDER BY mempool_perc DESC
+        LIMIT 12
+    """, (device_id,))
+
+    storage = safe_query("""
+        SELECT storage_descr AS descr, storage_perc AS pct
+        FROM storage
+        WHERE device_id = %s
+        ORDER BY storage_perc DESC
+        LIMIT 20
+    """, (device_id,))
+
+    events = safe_query("""
+        SELECT datetime, type, severity, message
+        FROM eventlog
+        WHERE device_id = %s
+        ORDER BY datetime DESC
+        LIMIT 12
+    """, (device_id,))
 
     summary = {
         "interfaces": len(ports),
-        "up": sum(1 for row in ports if row.get("ifOperStatus") == "up"),
-        "down": sum(1 for row in ports if row.get("ifOperStatus") == "down"),
-        "admin_down": sum(1 for row in ports if row.get("ifAdminStatus") == "down"),
+        "up": sum(1 for row in ports if str(row.get("ifOperStatus") or "").lower() == "up"),
+        "down": sum(1 for row in ports if str(row.get("ifOperStatus") or "").lower() == "down"),
+        "admin_down": sum(1 for row in ports if str(row.get("ifAdminStatus") or "").lower() == "down"),
     }
 
-    problem_ports = [row for row in ports if row.get("ifOperStatus") == "down" and row.get("ifAdminStatus") == "up"][:12]
-    busy_ports = sorted(ports, key=lambda row: safe_float(row.get("ifInOctets_rate")) + safe_float(row.get("ifOutOctets_rate")), reverse=True)[:35]
+    problem_ports = [
+        row for row in ports
+        if str(row.get("ifOperStatus") or "").lower() != "up"
+        and str(row.get("ifAdminStatus") or "").lower() == "up"
+    ][:12]
+
+    busy_ports = sorted(
+        ports,
+        key=lambda row: safe_float(row.get("ifInOctets_rate")) + safe_float(row.get("ifOutOctets_rate")),
+        reverse=True,
+    )[:15]
+
+    # If rates are mostly empty, still show useful ports rather than a blank table.
+    if not busy_ports and ports:
+        busy_ports = ports[:15]
+
+    if ports and all((safe_float(row.get("ifInOctets_rate")) + safe_float(row.get("ifOutOctets_rate"))) == 0 for row in busy_ports):
+        busy_ports = ports[:15]
 
     problem_rows = ""
     for row in problem_ports:
-        problem_rows += f"<tr><td>{interface_anchor(row)}</td><td class='status-cell'>{status_badge('down')} {status_badge('admin down')}</td><td>{h(row.get('ifAlias') or row.get('ifDescr'))}</td></tr>"
+        problem_rows += f"""
+        <tr>
+          <td>{interface_anchor(row)}</td>
+          <td class="status-cell">{status_badge(row.get('ifOperStatus'))}</td>
+          <td>{h(row.get('ifAlias') or row.get('ifDescr'))}</td>
+        </tr>"""
 
     vital_rows = ""
     for row in cpu:
@@ -1063,10 +1812,19 @@ def device(device_id: int):
 
     event_rows = ""
     for row in events:
-        event_rows += f"<tr><td>{h(row.get('datetime'))}</td><td>{h(row.get('type'))}</td><td>{h(row.get('severity'))}</td><td>{h(row.get('message'))}</td></tr>"
+        sev = str(row.get("severity") or "")
+        sev_class = "bad" if sev in ("4", "5", "critical", "error") else ""
+        event_rows += f"""
+        <tr>
+          <td>{h(row.get('datetime'))}</td>
+          <td>{h(row.get('type'))}</td>
+          <td class="{sev_class}">{h(row.get('severity'))}</td>
+          <td>{h(row.get('message'))}</td>
+        </tr>"""
 
     activity_rows = ""
     for row in busy_ports:
+        error_total = safe_float(row.get("ifInErrors_rate")) + safe_float(row.get("ifOutErrors_rate"))
         activity_rows += f"""
         <tr>
           <td>{interface_anchor(row)}</td>
@@ -1074,26 +1832,107 @@ def device(device_id: int):
           <td>{h(fmt_speed(row.get('ifSpeed')))}</td>
           <td>{h(fmt_rate(row.get('ifInOctets_rate')))}</td>
           <td>{h(fmt_rate(row.get('ifOutOctets_rate')))}</td>
-          <td>{h(row.get('ifInErrors_rate') or 0)}</td>
+          <td>{h(error_total)}</td>
           <td>{h(row.get('mac_count'))}</td>
           <td>{h(row.get('ifAlias') or row.get('ifDescr'))}</td>
         </tr>"""
 
+    if not activity_rows and ports:
+        for row in ports[:15]:
+            activity_rows += f"""
+            <tr>
+              <td>{interface_anchor(row)}</td>
+              <td class="status-cell">{status_badge(row.get('ifOperStatus'))}</td>
+              <td>{h(fmt_speed(row.get('ifSpeed')))}</td>
+              <td></td>
+              <td></td>
+              <td>0</td>
+              <td>{h(row.get('mac_count'))}</td>
+              <td>{h(row.get('ifAlias') or row.get('ifDescr'))}</td>
+            </tr>"""
+
+    port_title = f'{summary["interfaces"]} Interfaces: {summary["up"]} up, {summary["down"]} down'
+
     body = f"""
+<style>
+.akips-device-grid {{
+  display:grid;
+  grid-template-columns: 280px 330px minmax(620px, 1fr);
+  gap:10px;
+  align-items:start;
+}}
+.akips-mini-stack {{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:10px;
+}}
+.akips-center-stack {{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:10px;
+}}
+.akips-panel-title {{
+  text-align:center;
+  font-weight:700;
+  margin:0 0 8px 0;
+}}
+.akips-tabbar {{
+  display:flex;
+  gap:6px;
+  justify-content:center;
+  margin:0 0 8px 0;
+}}
+.akips-tabbar a {{
+  border:1px solid var(--border);
+  border-radius:4px;
+  padding:5px 9px;
+  text-decoration:none;
+  color:var(--text);
+  background:var(--panel2);
+}}
+.akips-availability {{
+  display:grid;
+  grid-template-columns:1fr 90px;
+  gap:8px;
+  align-items:center;
+}}
+.akips-bar {{
+  height:10px;
+  border:1px solid var(--border);
+  background:linear-gradient(90deg, rgba(46,160,67,.7), rgba(46,160,67,.2));
+}}
+.akips-events-box {{
+  min-height:62px;
+}}
+@media (max-width: 1300px) {{
+  .akips-device-grid {{
+    grid-template-columns:1fr;
+  }}
+}}
+</style>
+
 <section class="panel">
   <div class="panel-head">
-    <h1>{h(device_label(dev))}</h1>
+    <h1>{h(display_name)}</h1>
     <div class="actions">
       <a class="button" href="{LIBRENMS_BASE_URL}/device/device={h(dev.get('device_id'))}/">LibreNMS</a>
-      <a class="button" href="{LIBRENMS_BASE_URL}/device/device={h(dev.get('device_id'))}/tab=showconfig/">LibreNMS Config</a>
-      <a class="button" href="{OXIDIZED_BASE_URL}/node/show/{h(dev.get('hostname'))}">Oxidized</a>
-      <a class="button" href="/config/{h(dev.get('hostname'))}">Config Links</a>
+      <a class="button" href="/device/{h(device_id)}/config.txt">Download Config</a>
+      <a class="button" href="/device/{h(device_id)}/ping">Ping</a>
+      <a class="button" href="/device/{h(device_id)}/snmpwalk">SNMP Walk</a>
     </div>
   </div>
+
   <table class="identity">
-    <tr><th>Device</th><th>IPv4</th><th>Uptime</th><th>Location ID</th><th>Identifier</th><th>Description</th></tr>
     <tr>
-      <td>{h(device_label(dev))}</td>
+      <th>Device</th>
+      <th>IPv4</th>
+      <th>Uptime</th>
+      <th>Location ID</th>
+      <th>Identifier</th>
+      <th>Description</th>
+    </tr>
+    <tr>
+      <td>{h(display_name)}</td>
       <td>{h(fmt_ip(dev.get('ip_addr') or dev.get('ip')))}</td>
       <td>{h(dev.get('uptime'))}</td>
       <td>{h(dev.get('location'))}</td>
@@ -1101,6 +1940,7 @@ def device(device_id: int):
       <td>{h(dev.get('os'))} {h(dev.get('version'))}</td>
     </tr>
   </table>
+
   <section class="cards">
     {card("Interfaces", summary["interfaces"])}
     {card("Up", summary["up"])}
@@ -1109,83 +1949,230 @@ def device(device_id: int):
   </section>
 </section>
 
-<section class="dashboard-grid">
-  <section class="panel"><h2>Problem Ports</h2>{table(["Interface", "Problem", "Title"], problem_rows)}</section>
-  <section class="panel"><h2>Vitals</h2>{table(["Type", "Value", "Description"], vital_rows)}</section>
-  <section class="panel"><h2>Events</h2>{table(["Date/Time", "Type", "Severity", "Message"], event_rows)}</section>
+<section class="akips-device-grid">
+  <section class="akips-mini-stack">
+    <section class="panel akips-events-box">
+      <h2 class="akips-panel-title">Events</h2>
+      {table(["Date/Time", "Type", "Severity"], "".join(f"<tr><td>{h(r.get('datetime'))}</td><td>{h(r.get('type'))}</td><td>{h(r.get('severity'))}</td></tr>" for r in events[:5]))}
+    </section>
+
+    <section class="panel">
+      <h2 class="akips-panel-title">Status Exceptions</h2>
+      {table(["Interface", "Problem", "Title"], problem_rows)}
+    </section>
+  </section>
+
+  <section class="akips-center-stack">
+    <section class="panel">
+      <h2 class="akips-panel-title">Availability</h2>
+      <div class="akips-availability">
+        <div>Ping / SNMP</div>
+        <div class="akips-bar"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 class="akips-panel-title">Vitals</h2>
+      {table(["Type", "Value", "Description"], vital_rows)}
+    </section>
+  </section>
+
+  <section class="panel">
+    <h2 class="akips-panel-title">{h(port_title)}</h2>
+    <div class="akips-tabbar">
+      <a href="/reports/interface-configuration?device_ids={h(device_id)}">Config</a>
+      <a href="/reports/interface-statistics?device_ids={h(device_id)}">Statistics</a>
+      <a href="/reports/mac-table?device_ids={h(device_id)}">MAC Table</a>
+      <a href="/reports/events?device_ids={h(device_id)}">Events</a>
+    </div>
+    {table(["Interface", "Status", "Speed", "In", "Out", "Errors", "MACs", "Title"], activity_rows)}
+  </section>
 </section>
 
 <section class="panel">
-  <h2>Interface Activity</h2>
-  {table(["Interface", "Status", "Speed", "In", "Out", "Errors", "MACs", "Title"], activity_rows)}
+  <h2 class="center">Eventlog</h2>
+  {table(["Date/Time", "Type", "Severity", "Message"], event_rows)}
 </section>
 """
-    return layout(str(dev.get("hostname")), body)
+
+    selected_ids = selected_device_ids(device_ids)
+    if device_id not in selected_ids:
+        selected_ids = [device_id] + selected_ids
+
+    return layout(str(display_name), two_col("/devices", selected_ids, q, body))
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(q: str = "", device_ids: str = ""):
+    selected_ids = selected_device_ids(device_ids)
+
+    if len(selected_ids) == 1:
+        return device(int(selected_ids[0]), q, device_ids)
+
+    if len(selected_ids) == 0:
+        message = """
+<section class="panel">
+  <h1>Dashboard</h1>
+  <p>Select one switch on the left to open its dashboard.</p>
+</section>
+"""
+    else:
+        message = f"""
+<section class="panel">
+  <h1>Dashboard</h1>
+  <p>{h(len(selected_ids))} switches are selected. Select exactly one switch to open a device dashboard.</p>
+  <div class="actions">
+    <a class="button" href="/reports/interface-configuration?device_ids={h(",".join(str(x) for x in selected_ids))}">Interface Config</a>
+    <a class="button" href="/reports/interface-statistics?device_ids={h(",".join(str(x) for x in selected_ids))}">Interface Stats</a>
+    <a class="button" href="/reports/mac-table?device_ids={h(",".join(str(x) for x in selected_ids))}">MAC Table</a>
+  </div>
+</section>
+"""
+
+    return layout("Dashboard", two_col("/dashboard", selected_ids, q, message))
+
+
+def _norm_akips_key_part(value) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def _akips_unused_key(device, interface) -> str:
+    return f"{_norm_akips_key_part(device)}|{_norm_akips_key_part(interface)}"
+
+
+def _load_akips_unused_cache() -> dict:
+    try:
+        with open(AKIPS_UNUSED_CACHE_FILE, "r") as fh:
+            return json.load(fh)
+    except Exception:
+        return {"ports": {}}
 
 
 @app.get("/reports/interface-configuration", response_class=HTMLResponse)
-def interface_configuration(q: str = "", device_ids: str = "", limit: int = 150):
-    q = (q or "").strip()
+def report_interface_configuration(q: str = "", device_ids: str = ""):
     selected_ids = selected_device_ids(device_ids)
 
-    params: list[Any] = []
-    where_parts: list[str] = []
+    selected_clause = ""
+    params = []
 
-    add_device_filter(where_parts, params, selected_ids, "d")
+    if selected_ids:
+        placeholders = ",".join(["%s"] * len(selected_ids))
+        selected_clause = f" AND d.device_id IN ({placeholders}) "
+        params.extend(selected_ids)
 
+    search_clause = ""
     if q:
-        where_parts.append("(d.hostname LIKE %s OR p.ifName LIKE %s OR p.ifAlias LIKE %s OR p.ifDescr LIKE %s OR p.ifType LIKE %s)")
-        params.extend([f"%{q}%"] * 5)
+        search_clause = """
+          AND (
+            COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) LIKE %s
+            OR d.hostname LIKE %s
+            OR p.ifName LIKE %s
+            OR p.ifDescr LIKE %s
+            OR p.ifAlias LIKE %s
+            OR p.ifType LIKE %s
+          )
+        """
+        like = f"%{q}%"
+        params.extend([like, like, like, like, like, like])
 
-    where = "WHERE " + " AND ".join(where_parts) if where_parts else ""
-    params.append(limit)
-
-    rows = fetch_all(f"""
-        SELECT COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device, d.device_id, p.*, CASE
+    last_change_expr = """
+        CASE
             WHEN p.ifLastChange IS NULL OR p.ifLastChange = 0 OR d.uptime IS NULL OR d.last_polled IS NULL THEN NULL
             ELSE DATE_SUB(d.last_polled, INTERVAL CAST(GREATEST(d.uptime - (p.ifLastChange / 100), 0) AS UNSIGNED) SECOND)
-        END AS ifLastChange_at
+        END
+    """
+
+    sql = f"""
+        SELECT
+            d.device_id,
+            COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device,
+            INET6_NTOA(d.ip) AS switch_ip,
+            p.port_id,
+            p.ifName,
+            p.ifDescr,
+            p.ifAlias,
+            p.ifOperStatus,
+            p.ifAdminStatus,
+            p.ifSpeed,
+            p.ifDuplex,
+            p.ifPhysAddress,
+            p.ifType,
+            p.ifLastChange,
+            {last_change_expr} AS snmp_last_change
         FROM ports p
         JOIN devices d ON d.device_id = p.device_id
-        {where}
-        ORDER BY d.hostname, p.ifName
-        LIMIT %s
-    """, tuple(params))
+        WHERE p.ifName IS NOT NULL
+          AND p.ifName <> ''
+          {selected_clause}
+          {search_clause}
+        ORDER BY d.device_id, p.port_id
+    """
 
-    trs = ""
+    rows = safe_query(sql, tuple(params))
+
+    akips_cache = _load_akips_unused_cache()
+    akips_ports = akips_cache.get("ports", {}) or {}
+    akips_state_window = akips_cache.get("state_window") or ""
+
     for row in rows:
-        trs += f"""
+        akips_row = akips_ports.get(_akips_unused_key(row.get("device"), row.get("ifName")))
+        row["akips_last_change"] = akips_row.get("last_change") if akips_row else ""
+        row["akips_state"] = akips_row.get("state") if akips_row else ""
+        row["akips_current"] = akips_row.get("current") if akips_row else ""
+
+        if akips_row and akips_row.get("title") and not row.get("ifAlias"):
+            row["ifAlias"] = akips_row.get("title")
+
+    detail_limit = 2000
+    body_rows = ""
+
+    for row in rows[:detail_limit]:
+        admin_badge = status_badge(row.get("ifAdminStatus") or "")
+        oper_badge = status_badge(row.get("ifOperStatus") or "")
+        akips_last = row.get("akips_last_change") or row.get("snmp_last_change") or ""
+
+        body_rows += f"""
         <tr>
-          <td>{device_anchor(row)}</td>
+          <td><a href="/dashboard?device_ids={h(row.get('device_id'))}">{h(row.get('device'))}</a></td>
           <td>{interface_anchor(row)}</td>
           <td>{h(fmt_speed(row.get('ifSpeed')))}</td>
-          <td class="status-cell">{status_badge(row.get('ifAdminStatus'))}</td>
-          <td>{h(row.get('ifLastChange_at'))}</td>
-          <td class="status-cell">{status_badge(row.get('ifOperStatus'))}</td>
-          <td>{h(row.get('ifLastChange_at'))}</td>
-          <td>{h(row.get('ifDuplex') or 'na')}</td>
-          <td>{h(fmt_mac(row.get('ifPhysAddress')))}</td>
+          <td>{admin_badge}</td>
+          <td>{h(row.get('snmp_last_change') or '')}</td>
+          <td>{oper_badge}</td>
+          <td>{h(akips_last)}</td>
+          <td>{h(row.get('ifDuplex') or '')}</td>
+          <td>{h(row.get('ifPhysAddress') or '')}</td>
           <td></td>
-          <td>{h(row.get('ifType'))}</td>
-          <td>{h(row.get('ifDescr'))}</td>
-          <td>{h(row.get('ifAlias'))}</td>
+          <td>{h(row.get('ifType') or '')}</td>
+          <td>{h(row.get('ifDescr') or '')}</td>
+          <td>{h(row.get('ifAlias') or '')}</td>
         </tr>"""
+
+    if len(rows) > detail_limit:
+        body_rows += f"""
+        <tr>
+          <td colspan="13">Showing first {h(detail_limit)} of {h(len(rows))} interfaces. Use a switch selection or filter to narrow results.</td>
+        </tr>"""
+
+    akips_note = f"AKIPS cache: {h(akips_state_window)}" if akips_state_window else "AKIPS cache loaded"
 
     body = f"""
 <section class="panel">
   <h1 class="center">Interface Configuration</h1>
-  <div class="subtitle">Top {len(rows)} of {len(rows)}</div>
-  <form class="toolbar" method="get">
+  <div class="unused-total">Top {h(min(len(rows), detail_limit))} of {h(len(rows))} — {akips_note}</div>
+
+  <form class="unused-controls" method="get" action="/reports/interface-configuration">
     {hidden_device_ids(selected_ids)}
-    <input name="q" value="{h(q)}" placeholder="Filter selected switches, interface, title, type">
-    <button>Search</button>
-    <a class="button" href="/reports/interface-configuration">Clear</a>
+    <input name="q" value="{h(q)}" placeholder="Filter selected switches, interface, title, type" />
+    <button type="submit">Search</button>
+    <a class="button" href="/reports/interface-configuration?device_ids={h(','.join(str(x) for x in selected_ids))}">Clear</a>
   </form>
-  {table(["Device", "Interface", "Speed", "Admin State", "Admin Last Change", "Status", "Oper Last Change", "Duplex", "MAC", "IPAddr", "Type", "Description", "Title"], trs)}
+
+  {table(["Device", "Interface", "Speed", "Admin State", "Admin Last Change", "Status", "AKIPS Last Change", "Duplex", "MAC", "IPAddr", "Type", "Description", "Title"], body_rows)}
 </section>
 """
-    return layout("Interface Configuration", two_col("/reports/interface-configuration", selected_ids, q, body))
 
+    return layout("Interface Configuration", two_col("/reports/interface-configuration", selected_ids, q, body))
 
 @app.get("/reports/interface-statistics", response_class=HTMLResponse)
 def interface_statistics(q: str = "", device_ids: str = "", limit: int = 150):
@@ -1549,6 +2536,303 @@ def changes(q: str = "", device_ids: str = "", limit: int = 250):
     return layout("Changes", two_col("/reports/changes", selected_ids, q, body))
 
 
+
+
+def _load_unused_cache() -> dict:
+    try:
+        with open(UNUSED_CACHE_FILE, "r") as fh:
+            return json.load(fh)
+    except Exception:
+        return {"ports": {}}
+
+
+def _days_label(days: int) -> str:
+    days = int(days)
+    if days == 365:
+        return "Last 1 year"
+    if days == 730:
+        return "Last 2 years"
+    return f"Last {days} days"
+
+
+
+def _middkips_load_json(path: str) -> dict:
+    try:
+        with open(path, "r") as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
+def _middkips_norm_key_part(value) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def _middkips_akips_key(device, interface) -> str:
+    return f"{_middkips_norm_key_part(device)}|{_middkips_norm_key_part(interface)}"
+
+
+def _middkips_days_label(days: int) -> str:
+    days = int(days)
+    if days == 365:
+        return "Last 12 Months"
+    if days == 730:
+        return "Last 2 Years"
+    return f"Last {days} days"
+
+
+@app.get("/reports/unused-interfaces", response_class=HTMLResponse)
+def report_unused_interfaces(q: str = "", device_ids: str = "", days: int = 365, mode: str = "detailed"):
+    selected_ids = selected_device_ids(device_ids)
+    days = max(1, min(int(days or 365), 730))
+
+    selected_clause = ""
+    params = []
+
+    if selected_ids:
+        placeholders = ",".join(["%s"] * len(selected_ids))
+        selected_clause = f" AND d.device_id IN ({placeholders}) "
+        params.extend(selected_ids)
+
+    search_clause = ""
+    if q:
+        search_clause = """
+          AND (
+            COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) LIKE %s
+            OR d.hostname LIKE %s
+            OR p.ifName LIKE %s
+            OR p.ifDescr LIKE %s
+            OR p.ifAlias LIKE %s
+          )
+        """
+        like = f"%{q}%"
+        params.extend([like, like, like, like, like])
+
+    last_change_expr = """
+        CASE
+            WHEN p.ifLastChange IS NULL OR p.ifLastChange = 0 OR d.uptime IS NULL OR d.last_polled IS NULL THEN NULL
+            ELSE DATE_SUB(d.last_polled, INTERVAL CAST(GREATEST(d.uptime - (p.ifLastChange / 100), 0) AS UNSIGNED) SECOND)
+        END
+    """
+
+    sql = f"""
+        SELECT
+            d.device_id,
+            COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device,
+            d.hostname,
+            d.sysName,
+            INET6_NTOA(d.ip) AS ip_addr,
+            p.port_id,
+            p.ifName,
+            p.ifDescr,
+            p.ifAlias,
+            p.ifOperStatus,
+            p.ifAdminStatus,
+            p.ifSpeed,
+            p.ifType,
+            {last_change_expr} AS snmp_last_change
+        FROM ports p
+        JOIN devices d ON d.device_id = p.device_id
+        WHERE p.ifName IS NOT NULL
+          AND p.ifName <> ''
+          {selected_clause}
+          {search_clause}
+        ORDER BY d.device_id, p.port_id
+    """
+
+    rows = safe_query(sql, tuple(params))
+
+    akips_cache = _middkips_load_json(AKIPS_UNUSED_CACHE_FILE)
+    akips_ports = akips_cache.get("ports", {}) or {}
+    akips_window = akips_cache.get("state_window") or ""
+    state_label = akips_window or _middkips_days_label(days)
+
+    rrd_cache = _middkips_load_json(UNUSED_CACHE_FILE)
+    rrd_ports = rrd_cache.get("ports", {}) or {}
+    cutoff_ts = int(time.time()) - (days * 86400)
+
+    for row in rows:
+        akips_row = akips_ports.get(_middkips_akips_key(row.get("device"), row.get("ifName")))
+        rrd_row = rrd_ports.get(str(row.get("port_id")))
+
+        row["display_state"] = ""
+        row["display_current"] = ""
+        row["display_last_change"] = ""
+        row["display_title"] = ""
+
+        if akips_row:
+            row["display_state"] = akips_row.get("state") or ""
+            row["display_current"] = akips_row.get("current") or ""
+            row["display_last_change"] = akips_row.get("last_change") or ""
+            row["display_title"] = akips_row.get("title") or ""
+            if akips_row.get("speed"):
+                try:
+                    row["ifSpeed"] = int(akips_row.get("speed"))
+                except Exception:
+                    pass
+
+        if not row["display_state"]:
+            if rrd_row and rrd_row.get("rrd_found"):
+                last_ts = rrd_row.get("last_traffic_ts")
+                if last_ts and int(last_ts) >= cutoff_ts:
+                    row["display_state"] = "used"
+                else:
+                    row["display_state"] = "free"
+            else:
+                row["display_state"] = "free" if str(row.get("ifOperStatus") or "").lower() == "down" else "used"
+
+        if not row["display_current"]:
+            row["display_current"] = row.get("ifOperStatus") or ""
+
+        if not row["display_last_change"]:
+            row["display_last_change"] = row.get("snmp_last_change") or ""
+
+        if not row["display_title"]:
+            row["display_title"] = row.get("ifAlias") or row.get("ifDescr") or ""
+
+    summary = {}
+    for row in rows:
+        did = row.get("device_id")
+        if did not in summary:
+            summary[did] = {
+                "device_id": did,
+                "device": row.get("device"),
+                "total": 0,
+                "free": 0,
+                "used": 0,
+            }
+
+        summary[did]["total"] += 1
+        if str(row.get("display_state") or "").lower() == "free":
+            summary[did]["free"] += 1
+        else:
+            summary[did]["used"] += 1
+
+    summary_rows = ""
+    for item in sorted(summary.values(), key=lambda x: (-x["free"], x["device"] or "")):
+        did = item["device_id"]
+        summary_rows += f"""
+        <tr>
+          <td><a href="/reports/unused-interfaces?device_ids={h(did)}&days={h(days)}&mode=detailed">{h(item["device"])}</a></td>
+          <td>{h(item["total"])}</td>
+          <td>{h(item["free"])}</td>
+          <td>{h(item["used"])}</td>
+        </tr>"""
+
+    def sort_key(row):
+        return (
+            0 if str(row.get("display_state") or "").lower() == "free" else 1,
+            row.get("device") or "",
+            row.get("ifName") or "",
+        )
+
+    detail_rows = ""
+    detail_limit = 3000
+
+    for row in sorted(rows, key=sort_key)[:detail_limit]:
+        state = row.get("display_state") or ""
+        state_badge = f'<span class="badge {"bad" if str(state).lower() == "free" else "good"}">{h(state)}</span>'
+        current_badge = status_badge(row.get("display_current") or "")
+        row_class = ' class="unused-free"' if str(state).lower() == "free" else ""
+
+        detail_rows += f"""
+        <tr{row_class}>
+          <td><a href="/dashboard?device_ids={h(row.get('device_id'))}">{h(row.get('device'))}</a></td>
+          <td>{interface_anchor(row)}</td>
+          <td>{h(fmt_speed(row.get('ifSpeed')))}</td>
+          <td>{state_badge}</td>
+          <td>{current_badge}</td>
+          <td>{h(row.get('display_last_change'))}</td>
+          <td>{h(row.get('display_title'))}</td>
+        </tr>"""
+
+    if len(rows) > detail_limit:
+        detail_rows += f"""
+        <tr>
+          <td colspan="7">Showing first {h(detail_limit)} of {h(len(rows))} interfaces. Use a switch selection or filter to narrow results.</td>
+        </tr>"""
+
+    ids = ",".join(str(x) for x in selected_ids)
+
+    days_options = ""
+    for opt in (30, 90, 180, 365, 730):
+        selected = "selected" if opt == days else ""
+        days_options += f'<option value="{opt}" {selected}>{h(_middkips_days_label(opt))}</option>'
+
+    akips_note = f"AKIPS cache {h(akips_window)} loaded, {h(len(akips_ports))} ports" if akips_ports else "No AKIPS cache loaded"
+    rrd_note = f"RRD cache generated {h(rrd_cache.get('generated_at', 'unknown'))}" if rrd_ports else "No RRD cache"
+
+    body = f"""
+<style>
+.unused-grid {{
+  display:grid;
+  grid-template-columns: 420px minmax(700px, 1fr);
+  gap:12px;
+  align-items:start;
+}}
+.unused-free td {{
+  background: rgba(248, 81, 73, .10);
+}}
+.unused-controls {{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  margin-bottom:10px;
+  flex-wrap:wrap;
+}}
+.unused-controls input {{
+  min-width:260px;
+}}
+.unused-total {{
+  text-align:center;
+  color:var(--muted);
+  margin-top:-8px;
+  margin-bottom:8px;
+}}
+@media (max-width: 1200px) {{
+  .unused-grid {{
+    grid-template-columns:1fr;
+  }}
+}}
+</style>
+
+<section class="panel">
+  <div class="panel-head">
+    <h1>Unused Interfaces</h1>
+    <div class="actions">
+      <a class="button" href="/reports/unused-interfaces?days={h(days)}&mode=summary&device_ids={h(ids)}">Summary</a>
+      <a class="button" href="/reports/unused-interfaces?days={h(days)}&mode=detailed&device_ids={h(ids)}">Detailed</a>
+    </div>
+  </div>
+
+  <form class="unused-controls" method="get" action="/reports/unused-interfaces">
+    {hidden_device_ids(selected_ids)}
+    <select name="days">{days_options}</select>
+    <input name="q" value="{h(q)}" placeholder="Filter device, interface, title" />
+    <button type="submit">Search</button>
+    <a class="button" href="/reports/unused-interfaces">Clear</a>
+  </form>
+
+  <div class="unused-total">Interface usage for {h(state_label)} — {akips_note} — {rrd_note}</div>
+
+  <section class="unused-grid">
+    <section class="panel">
+      <h2 class="center">Interface Usage</h2>
+      <div class="unused-total">Total {h(len(summary))} devices</div>
+      {table(["Device", "Total", "Free", "Used"], summary_rows)}
+    </section>
+
+    <section class="panel">
+      <h2 class="center">Interface Detail</h2>
+      <div class="unused-total">Total {h(len(rows))} interfaces</div>
+      {table(["Device", "Interface", "Speed", f"State {h(state_label)}", "Current", "Last Change", "Title"], detail_rows)}
+    </section>
+  </section>
+</section>
+"""
+
+    return layout("Unused Interfaces", two_col("/reports/unused-interfaces", selected_ids, q, body))
+
 @app.get("/reports/events", response_class=HTMLResponse)
 def events(q: str = "", device_ids: str = "", limit: int = 250):
     q = (q or "").strip()
@@ -1830,3 +3114,807 @@ def interface_detail(port_id: int):
 </section>
 """
     return layout(iface_title, body)
+
+
+def _middkips_reverse_dns(value: str) -> str:
+    value = str(value or "").strip()
+    try:
+        return socket.gethostbyaddr(value)[0]
+    except Exception:
+        return ""
+
+
+def _middkips_token_sets_for_lldp(value: str):
+    value = str(value or "").strip()
+    terms = []
+
+    if value:
+        terms.append(value)
+
+    rdns = _middkips_reverse_dns(value)
+    if rdns:
+        terms.append(rdns)
+        terms.append(rdns.split(".")[0])
+
+    if "." in value and not re.match(r"^\d+\.\d+\.\d+\.\d+$", value):
+        terms.append(value.split(".")[0])
+
+    token_sets = []
+    stop = {"middlebury", "edu", "www", "net", "org", "com"}
+
+    for term in terms:
+        cleaned = term.lower()
+        cleaned = cleaned.replace(".middlebury.edu", "")
+        tokens = [
+            t for t in re.split(r"[^a-z0-9]+", cleaned)
+            if len(t) > 1 and t not in stop and not t.isdigit()
+        ]
+        if tokens and tokens not in token_sets:
+            token_sets.append(tokens)
+
+    return terms, token_sets
+
+
+@app.get("/tools/lldp-lookup", response_class=HTMLResponse)
+def tools_lldp_lookup(target: str = ""):
+    target = str(target or "").strip()
+    rows = []
+    terms = []
+    token_sets = []
+
+    if target:
+        terms, token_sets = _middkips_token_sets_for_lldp(target)
+
+        expr = """
+        CONCAT_WS(' ',
+          COALESCE(l.remote_hostname,''),
+          COALESCE(l.remote_port,''),
+          COALESCE(l.remote_platform,''),
+          COALESCE(l.remote_version,''),
+          COALESCE(NULLIF(rd.sysName,''), NULLIF(rd.hostname,''), INET6_NTOA(rd.ip)),
+          INET6_NTOA(rd.ip)
+        )
+        """
+
+        clauses = []
+        params = []
+
+        for term in terms:
+            clauses.append(f"LOWER({expr}) LIKE LOWER(%s)")
+            params.append(f"%{term}%")
+
+        for tokens in token_sets:
+            parts = []
+            for tok in tokens:
+                parts.append(f"LOWER({expr}) LIKE LOWER(%s)")
+                params.append(f"%{tok}%")
+            if parts:
+                clauses.append("(" + " AND ".join(parts) + ")")
+
+        where = " OR ".join(clauses) if clauses else "1=0"
+
+        sql = f"""
+        SELECT
+          l.id,
+          l.protocol,
+          l.local_port_id,
+          COALESCE(NULLIF(ld.sysName,''), NULLIF(ld.hostname,''), INET6_NTOA(ld.ip)) AS local_switch,
+          INET6_NTOA(ld.ip) AS local_switch_ip,
+          lp.ifName AS local_interface,
+          lp.ifAlias AS local_title,
+          l.remote_hostname,
+          l.remote_port,
+          l.remote_platform,
+          l.remote_version,
+          COALESCE(l.remote_device_id,0) AS remote_device_id,
+          COALESCE(NULLIF(rd.sysName,''), NULLIF(rd.hostname,''), INET6_NTOA(rd.ip)) AS matched_remote_device,
+          INET6_NTOA(rd.ip) AS matched_remote_ip
+        FROM links l
+        LEFT JOIN ports lp ON lp.port_id = l.local_port_id
+        LEFT JOIN devices ld ON ld.device_id = lp.device_id
+        LEFT JOIN devices rd ON rd.device_id = l.remote_device_id
+        WHERE l.protocol = 'lldp'
+          AND ({where})
+        ORDER BY
+          CASE WHEN COALESCE(l.remote_device_id,0) = 0 THEN 1 ELSE 0 END,
+          l.remote_hostname,
+          local_switch,
+          local_interface
+        LIMIT 200
+        """
+
+        rows = safe_query(sql, tuple(params))
+
+    body_rows = ""
+    for r in rows:
+        matched = r.get("matched_remote_device") or ""
+        if not matched and int(r.get("remote_device_id") or 0) == 0:
+            matched = "Unmatched in LibreNMS"
+
+        body_rows += f"""
+        <tr>
+          <td>{h(r.get('remote_hostname'))}</td>
+          <td>{h(r.get('remote_port'))}</td>
+          <td>{h(r.get('local_switch'))}</td>
+          <td>{h(r.get('local_switch_ip'))}</td>
+          <td>{h(r.get('local_interface'))}</td>
+          <td>{h(r.get('local_title'))}</td>
+          <td>{h(matched)}</td>
+          <td>{h(r.get('matched_remote_ip') or '')}</td>
+          <td>{h(r.get('remote_version') or r.get('remote_platform') or '')}</td>
+        </tr>"""
+
+    if target and not rows:
+        body_rows = '<tr><td colspan="9">No LLDP matches found.</td></tr>'
+
+    searched = ", ".join(terms) if terms else ""
+    token_text = "; ".join([" + ".join(x) for x in token_sets]) if token_sets else ""
+
+    body = f"""
+<section class="panel">
+  <h1>LLDP Lookup</h1>
+
+  <form class="unused-controls" method="get" action="/tools/lldp-lookup">
+    <input name="target" value="{h(target)}" placeholder="IP, DNS name, switch name" style="min-width:360px" />
+    <button type="submit">Search</button>
+  </form>
+
+  <div class="unused-total">
+    Search terms: {h(searched or "none")}<br />
+    Token match: {h(token_text or "none")}
+  </div>
+
+  {table(["Remote Hostname", "Remote Port", "Local Switch", "Local IP", "Local Interface", "Local Title", "LibreNMS Match", "Matched IP", "Remote Version"], body_rows)}
+</section>
+"""
+    return layout("LLDP Lookup", body)
+
+
+
+@app.get("/tools/unmatched-lldp-switches", response_class=HTMLResponse)
+def tools_unmatched_lldp_switches(q: str = "", min_links: int = 1, mode: str = "missing"):
+    min_links = max(1, int(min_links or 1))
+    mode = (mode or "missing").lower()
+    if mode not in ("missing", "exists", "all"):
+        mode = "missing"
+
+    params = []
+    q_clause = ""
+    if q:
+        q_clause = """
+          AND CONCAT_WS(' ',
+            COALESCE(l.remote_hostname,''),
+            COALESCE(l.remote_port,''),
+            COALESCE(l.remote_platform,''),
+            COALESCE(l.remote_version,''),
+            COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)),
+            INET6_NTOA(d.ip),
+            COALESCE(p.ifName,''),
+            COALESCE(p.ifAlias,'')
+          ) LIKE %s
+        """
+        params.append(f"%{q}%")
+
+    sql = f"""
+    SELECT
+      l.remote_hostname,
+      COUNT(*) AS links_seen,
+
+      SUBSTRING_INDEX(
+        GROUP_CONCAT(
+          DISTINCT CONCAT(
+            COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)),
+            ' ',
+            COALESCE(p.ifName,''),
+            ' -> ',
+            COALESCE(l.remote_port,'')
+          )
+          ORDER BY COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)), COALESCE(p.ifName,'')
+          SEPARATOR '\\n'
+        ),
+        '\\n',
+        8
+      ) AS local_edges,
+
+      SUBSTRING_INDEX(
+        GROUP_CONCAT(DISTINCT COALESCE(l.remote_port,'') ORDER BY COALESCE(l.remote_port,'') SEPARATOR '\\n'),
+        '\\n',
+        8
+      ) AS remote_ports,
+
+      MAX(COALESCE(l.remote_platform,'')) AS remote_platform,
+      MAX(COALESCE(l.remote_version,'')) AS remote_version,
+      MAX(md.device_id) AS possible_device_id,
+      MAX(COALESCE(NULLIF(md.sysName,''), NULLIF(md.hostname,''), INET6_NTOA(md.ip))) AS possible_device,
+      MAX(INET6_NTOA(md.ip)) AS possible_device_ip
+    FROM links l
+    LEFT JOIN ports p ON p.port_id = l.local_port_id
+    LEFT JOIN devices d ON d.device_id = p.device_id
+    LEFT JOIN devices md ON (
+         LOWER(md.hostname) = LOWER(l.remote_hostname)
+      OR LOWER(md.sysName) = LOWER(l.remote_hostname)
+      OR LOWER(SUBSTRING_INDEX(md.hostname, '.', 1)) = LOWER(l.remote_hostname)
+      OR LOWER(SUBSTRING_INDEX(md.sysName, '.', 1)) = LOWER(l.remote_hostname)
+    )
+    WHERE l.protocol = 'lldp'
+      AND COALESCE(l.remote_device_id, 0) = 0
+      AND COALESCE(l.remote_hostname, '') <> ''
+      AND (
+           LOWER(COALESCE(l.remote_version,'')) REGEXP 'juniper|junos|ethernet switch|ex[0-9]|qfx|aruba.*switch|arubaos-cx|cx[0-9][0-9][0-9][0-9]|2930m|2930f|3810m|5400r|6300|6400|8320|8360'
+        OR LOWER(COALESCE(l.remote_platform,'')) REGEXP 'juniper|junos|ethernet switch|ex[0-9]|qfx|aruba.*switch|arubaos-cx|cx[0-9][0-9][0-9][0-9]|2930m|2930f|3810m|5400r|6300|6400|8320|8360'
+        OR LOWER(COALESCE(l.remote_hostname,'')) REGEXP '(^dist-|^agg|aggregation|core|qfx|-[cj]$|-cx$|-j$)'
+      )
+      AND LOWER(CONCAT_WS(' ',
+        COALESCE(l.remote_hostname,''),
+        COALESCE(l.remote_port,''),
+        COALESCE(l.remote_platform,''),
+        COALESCE(l.remote_version,'')
+      )) NOT REGEXP 'aruba ap|model: [0-9]+h|axis|camera|phone|sip-|codec|poweredge|linux|printer|algo|yealink|polycom|in-touch|intouch|shure|microflex|loudspeaker|mxn5|mxn'
+      {q_clause}
+    GROUP BY l.remote_hostname
+    HAVING links_seen >= %s
+    ORDER BY links_seen DESC, l.remote_hostname
+    LIMIT 500
+    """
+    params.append(min_links)
+
+    rows = safe_query(sql, tuple(params))
+
+    if mode == "missing":
+        rows = [r for r in rows if not r.get("possible_device_id")]
+    elif mode == "exists":
+        rows = [r for r in rows if r.get("possible_device_id")]
+
+    body_rows = ""
+    for r in rows:
+        possible_id = r.get("possible_device_id")
+
+        if possible_id:
+            action = "Exists in LibreNMS. Rediscover/poll LLDP on the local switches, or fix hostname/sysName normalization."
+            match = f'<a href="/dashboard?device_ids={h(possible_id)}">{h(r.get("possible_device"))}</a><br>{h(r.get("possible_device_ip") or "")}'
+            row_class = ""
+        else:
+            action = "Missing from LibreNMS. Add device or align Mist/Junos hostname with DNS, then rediscover local LLDP."
+            match = "No matching device row"
+            row_class = ' class="unused-free"'
+
+        edges = h(r.get("local_edges") or "").replace("\n", "<br>")
+        ports = h(r.get("remote_ports") or "").replace("\n", "<br>")
+        version = h(r.get("remote_version") or r.get("remote_platform") or "")
+
+        if int(r.get("links_seen") or 0) > 8:
+            edges += f"<br><span class='muted'>... {h(int(r.get('links_seen')) - 8)} more links</span>"
+
+        body_rows += f"""
+        <tr{row_class}>
+          <td>{h(r.get('remote_hostname'))}</td>
+          <td>{h(r.get('links_seen'))}</td>
+          <td>{edges}</td>
+          <td>{ports}</td>
+          <td>{version}</td>
+          <td>{match}</td>
+          <td>{action}</td>
+        </tr>"""
+
+    if not body_rows:
+        body_rows = '<tr><td colspan="7">No unmatched switch-like LLDP neighbors found for this view.</td></tr>'
+
+    body = f"""
+<section class="panel">
+  <h1>Unmatched LLDP Switches</h1>
+
+  <form class="unused-controls" method="get" action="/tools/unmatched-lldp-switches">
+    <input name="q" value="{h(q)}" placeholder="Filter remote host, local switch, port, platform" style="min-width:380px" />
+    <label>Min links <input name="min_links" value="{h(min_links)}" style="width:70px" /></label>
+    <select name="mode">
+      <option value="missing" {'selected' if mode == 'missing' else ''}>Missing from LibreNMS</option>
+      <option value="exists" {'selected' if mode == 'exists' else ''}>Exists but not correlated</option>
+      <option value="all" {'selected' if mode == 'all' else ''}>All unmatched LLDP</option>
+    </select>
+    <button type="submit">Search</button>
+    <a class="button" href="/tools/unmatched-lldp-switches">Clear</a>
+  </form>
+
+  <div class="actions" style="margin-bottom:8px">
+    <a class="button" href="/tools/unmatched-lldp-switches?mode=missing&min_links={h(min_links)}">Missing from LibreNMS</a>
+    <a class="button" href="/tools/unmatched-lldp-switches?mode=exists&min_links={h(min_links)}">Exists but not correlated</a>
+    <a class="button" href="/tools/unmatched-lldp-switches?mode=all&min_links={h(min_links)}">All</a>
+  </div>
+
+  <div class="unused-total">
+    Default view shows switch-like LLDP neighbors that do not have a matching LibreNMS device row. Endpoint devices are hidden.
+  </div>
+
+  {table(["Remote Switch", "Links", "Seen From", "Remote Ports", "Platform / Version", "LibreNMS Match", "Action"], body_rows)}
+</section>
+"""
+    return layout("Unmatched LLDP Switches", body)
+
+
+
+def _solidserver_plugin_settings() -> dict:
+    import json
+    import os
+
+    settings = {}
+    try:
+        cols = fetch_all("SHOW COLUMNS FROM plugins")
+        colnames = {str(c.get("Field")) for c in cols}
+        name_col = next((c for c in ("plugin_name", "name", "plugin") if c in colnames), None)
+        if name_col and "settings" in colnames:
+            row = fetch_one(f"SELECT settings FROM plugins WHERE `{name_col}` = %s LIMIT 1", ("SolidServer",))
+            if row and row.get("settings"):
+                parsed = json.loads(str(row.get("settings")))
+                if isinstance(parsed, dict):
+                    settings.update(parsed)
+    except Exception:
+        pass
+
+    return {
+        "base_url": str(settings.get("base_url") or os.getenv("EIP_BASE_URL") or "https://juno-eip.middlebury.edu").rstrip("/"),
+        "username": str(settings.get("username") or os.getenv("EIP_USER") or ""),
+        "password": str(settings.get("password") or os.getenv("EIP_PASS") or ""),
+        "verify_tls": bool(settings.get("verify_tls", False)),
+    }
+
+
+def _eip_get_rows(endpoint: str, where: str = "", max_rows: int = 100) -> list:
+    import base64
+    import json
+    import ssl
+    import urllib.parse
+    import urllib.request
+
+    cfg = _solidserver_plugin_settings()
+    if not cfg["username"] or not cfg["password"]:
+        raise RuntimeError("SolidServer credentials not found in LibreNMS plugin settings.")
+
+    params = {"limit": max_rows, "offset": 0}
+    if where:
+        params["WHERE"] = where
+
+    url = cfg["base_url"] + endpoint + "?" + urllib.parse.urlencode(params)
+    auth = base64.b64encode((cfg["username"] + ":" + cfg["password"]).encode()).decode()
+    req = urllib.request.Request(url, headers={
+        "Authorization": "Basic " + auth,
+        "Accept": "application/json",
+    })
+
+    ctx = ssl.create_default_context() if cfg["verify_tls"] else ssl._create_unverified_context()
+
+    with urllib.request.urlopen(req, context=ctx, timeout=25) as resp:
+        body = resp.read().decode("utf-8", "replace")
+
+    data = json.loads(body) if body.strip() else []
+    if isinstance(data, dict):
+        if str(data.get("errno", "0")) != "0":
+            raise RuntimeError(data.get("errmsg") or data.get("name") or "SolidServer API error")
+        data = [data]
+
+    return [r for r in data if isinstance(r, dict) and str(r.get("errno", "0")) == "0"]
+
+
+def _eip_q(v: str) -> str:
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def _solid_table(rows: list, cols: list) -> str:
+    if not rows:
+        return "<div class='unused-total'>No matches.</div>"
+    body = ""
+    for r in rows:
+        body += "<tr>" + "".join(f"<td>{h(r.get(k, ''))}</td>" for label, k in cols) + "</tr>"
+    return table([label for label, k in cols], body)
+
+
+def _solidserver_search(endpoint: str, where: str, max_rows: int = 100) -> list:
+    try:
+        return _eip_get_rows(endpoint, where, max_rows=max_rows)
+    except Exception:
+        return []
+
+
+
+
+def _eip_get_rows_paged(endpoint: str, where: str = "", max_rows: int = 2000) -> list:
+    import base64
+    import json
+    import ssl
+    import urllib.parse
+    import urllib.request
+
+    cfg = _solidserver_plugin_settings()
+    if not cfg["username"] or not cfg["password"]:
+        raise RuntimeError("SolidServer credentials not found in LibreNMS plugin settings.")
+
+    rows = []
+    limit = 500
+    offset = 0
+
+    while len(rows) < max_rows:
+        params = {"limit": limit, "offset": offset}
+        if where:
+            params["WHERE"] = where
+
+        url = cfg["base_url"] + endpoint + "?" + urllib.parse.urlencode(params)
+        auth = base64.b64encode((cfg["username"] + ":" + cfg["password"]).encode()).decode()
+        req = urllib.request.Request(url, headers={
+            "Authorization": "Basic " + auth,
+            "Accept": "application/json",
+        })
+
+        ctx = ssl.create_default_context() if cfg["verify_tls"] else ssl._create_unverified_context()
+
+        with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+            body = resp.read().decode("utf-8", "replace")
+
+        page = json.loads(body) if body.strip() else []
+        if isinstance(page, dict):
+            if str(page.get("errno", "0")) != "0":
+                raise RuntimeError(page.get("errmsg") or page.get("name") or "SolidServer API error")
+            page = [page]
+
+        if not isinstance(page, list):
+            raise RuntimeError("SolidServer API returned unexpected data")
+
+        good = [r for r in page if isinstance(r, dict) and str(r.get("errno", "0")) == "0"]
+        rows.extend(good)
+
+        if len(page) < limit:
+            break
+
+        offset += limit
+
+    return rows[:max_rows]
+
+
+def _safe_int(v, default=0):
+    try:
+        if v is None or v == "":
+            return default
+        return int(float(str(v)))
+    except Exception:
+        return default
+
+
+def _safe_float(v, default=None):
+    try:
+        if v is None or v == "":
+            return default
+        return float(str(v))
+    except Exception:
+        return default
+
+
+def _solidserver_dashboard_html() -> str:
+    errors = []
+
+    def load(endpoint, max_rows):
+        try:
+            return _eip_get_rows_paged(endpoint, "", max_rows=max_rows)
+        except Exception as exc:
+            errors.append(f"{endpoint}: {exc}")
+            return []
+
+    ranges = load("/rest/dhcp_range_list", 5000)
+    scopes = load("/rest/dhcp_scope_list", 3000)
+    statics = load("/rest/dhcp_static_list", 1000)
+    ipam = load("/rest/ip_address_list", 1000)
+    rrs = load("/rest/dns_rr_list", 3000)
+    zones = load("/rest/dns_zone_list", 1000)
+
+    by_network = {}
+    for r in ranges:
+        name = r.get("dhcpsn_name") or r.get("dhcpscope_name") or "unknown"
+        item = by_network.setdefault(name, {
+            "name": name,
+            "ranges": 0,
+            "used": 0,
+            "size": 0,
+            "lease_percent_max": 0.0,
+            "servers": set(),
+            "scopes": set(),
+        })
+        size = _safe_int(r.get("dhcprange_size"))
+        used = _safe_int(r.get("dhcprange_lease_count"))
+        pct = _safe_float(r.get("dhcprange_lease_percent"), 0.0) or 0.0
+        item["ranges"] += 1
+        item["size"] += size
+        item["used"] += used
+        item["lease_percent_max"] = max(item["lease_percent_max"], pct)
+        if r.get("dhcp_name"):
+            item["servers"].add(str(r.get("dhcp_name")))
+        if r.get("dhcpscope_name"):
+            item["scopes"].add(str(r.get("dhcpscope_name")))
+
+    network_rows = sorted(by_network.values(), key=lambda x: x["lease_percent_max"], reverse=True)[:100]
+    network_body = ""
+    for n in network_rows:
+        pct = (n["used"] / n["size"] * 100.0) if n["size"] else n["lease_percent_max"]
+        network_body += f"""
+        <tr>
+          <td><a href="/tools/solidserver?q={h(n['name'])}">{h(n['name'])}</a></td>
+          <td>{h(n['ranges'])}</td>
+          <td>{h(n['size'])}</td>
+          <td>{h(n['used'])}</td>
+          <td>{h(f'{pct:.1f}%')}</td>
+          <td>{h(', '.join(sorted(n['servers'])[:3]))}</td>
+        </tr>
+        """
+
+    rr_by_type = {}
+    rr_by_zone = {}
+    for r in rrs:
+        rr_type = r.get("rr_type") or "unknown"
+        zone = r.get("dnszone_name") or "unknown"
+        rr_by_type[rr_type] = rr_by_type.get(rr_type, 0) + 1
+        rr_by_zone[zone] = rr_by_zone.get(zone, 0) + 1
+
+    rr_type_body = ""
+    for rr_type, count in sorted(rr_by_type.items(), key=lambda kv: kv[1], reverse=True):
+        rr_type_body += f"<tr><td>{h(rr_type)}</td><td>{h(count)}</td></tr>"
+
+    zone_body = ""
+    for zone, count in sorted(rr_by_zone.items(), key=lambda kv: kv[1], reverse=True)[:100]:
+        zone_body += f"""
+        <tr>
+          <td><a href="/tools/solidserver?q={h(zone)}">{h(zone)}</a></td>
+          <td>{h(count)}</td>
+        </tr>
+        """
+
+    static_body = ""
+    for r in statics[:100]:
+        static_body += f"""
+        <tr>
+          <td><a href="/tools/solidserver?q={h(r.get('dhcphost_name') or r.get('dhcphost_addr') or '')}">{h(r.get('dhcphost_name'))}</a></td>
+          <td>{h(r.get('dhcphost_addr'))}</td>
+          <td>{h(r.get('dhcphost_mac_addr'))}</td>
+          <td>{h(r.get('dhcpsn_name'))}</td>
+          <td>{h(r.get('dhcp_name'))}</td>
+        </tr>
+        """
+
+    ipam_body = ""
+    for r in ipam[:100]:
+        ipam_body += f"""
+        <tr>
+          <td><a href="/tools/solidserver?q={h(r.get('hostaddr') or '')}">{h(r.get('hostaddr'))}</a></td>
+          <td>{h(r.get('name'))}</td>
+          <td>{h(r.get('mac_addr'))}</td>
+          <td>{h(r.get('subnet_name'))}</td>
+          <td>{h(r.get('pool_name'))}</td>
+          <td>{h(r.get('last_seen'))}</td>
+        </tr>
+        """
+
+    zone_inventory_body = ""
+    for z in zones[:100]:
+        zone_inventory_body += f"""
+        <tr>
+          <td><a href="/tools/solidserver?q={h(z.get('dnszone_name') or '')}">{h(z.get('dnszone_name'))}</a></td>
+          <td>{h(z.get('dnsview_name'))}</td>
+          <td>{h(z.get('dnszone_type'))}</td>
+          <td>{h(z.get('dns_name'))}</td>
+          <td>{h(z.get('dnszone_is_reverse'))}</td>
+        </tr>
+        """
+
+    error_html = ""
+    if errors:
+        error_html = "<section class='panel'><h2>Load notes</h2>" + "".join(f"<div class='unused-total'>{h(e)}</div>" for e in errors) + "</section>"
+
+    return f"""
+    <section class="panel">
+      <h1>SolidServer</h1>
+      <p>Live dashboard from EIP/SolidServer DHCP, IPAM, and DNS REST data.</p>
+      <form class="unused-controls" method="get" action="/tools/solidserver">
+        <input name="q" placeholder="IP, hostname, FQDN, MAC, subnet, DNS value">
+        <button class="button" type="submit">Search</button>
+      </form>
+    </section>
+
+    <section class="dashboard-grid">
+      {card("DHCP Ranges", len(ranges))}
+      {card("DHCP Scopes", len(scopes))}
+      {card("DHCP Static", len(statics))}
+      {card("IPAM Records", len(ipam))}
+      {card("DNS RRs", len(rrs))}
+      {card("DNS Zones", len(zones))}
+    </section>
+
+    <section class="panel">
+      <h2>DHCP Utilization by Shared Network</h2>
+      <div class="unused-total">Top 100 by highest observed range utilization.</div>
+      {table(["Shared Network", "Ranges", "Size", "Used", "Used %", "DHCP Servers"], network_body)}
+    </section>
+
+    <section class="dashboard-grid">
+      <section class="panel">
+        <h2>DNS RR Types</h2>
+        {table(["Type", "Count"], rr_type_body)}
+      </section>
+      <section class="panel">
+        <h2>Top DNS Zones by RR Count</h2>
+        {table(["Zone", "RRs"], zone_body)}
+      </section>
+    </section>
+
+    <section class="panel">
+      <h2>DNS Zone Inventory</h2>
+      {table(["Zone", "View", "Type", "DNS Server", "Reverse"], zone_inventory_body)}
+    </section>
+
+    <section class="panel">
+      <h2>DHCP Static / Reservations Sample</h2>
+      {table(["Name", "IP", "MAC", "Shared Network", "DHCP Server"], static_body)}
+    </section>
+
+    <section class="panel">
+      <h2>IPAM Address Sample</h2>
+      {table(["IP", "Name", "MAC", "Subnet", "Pool", "Last Seen"], ipam_body)}
+    </section>
+
+    {error_html}
+    """
+
+
+@app.get("/tools/solidserver", response_class=HTMLResponse)
+def tools_solidserver(q: str = ""):
+    q = (q or "").strip()
+
+    if not q:
+        try:
+            body = _solidserver_dashboard_html()
+        except Exception as exc:
+            body = f"""
+            <section class="panel">
+              <h1>SolidServer</h1>
+              <div class="unused-total">Dashboard load failed: {h(exc)}</div>
+              <form class="unused-controls" method="get" action="/tools/solidserver">
+                <input name="q" placeholder="IP, hostname, FQDN, MAC, subnet, DNS value">
+                <button class="button" type="submit">Search</button>
+              </form>
+            </section>
+            """
+        return layout("SolidServer", body)
+
+    like = "%" + q.replace("'", "''") + "%"
+    exact = _eip_q(q)
+
+    ipam_where = " OR ".join([
+        f"hostaddr={exact}",
+        f"name LIKE {_eip_q(like)}",
+        f"ip_alias LIKE {_eip_q(like)}",
+        f"mac_addr LIKE {_eip_q(like)}",
+        f"subnet_name LIKE {_eip_q(like)}",
+        f"pool_name LIKE {_eip_q(like)}",
+    ])
+
+    dhcp_static_where = " OR ".join([
+        f"dhcphost_addr={exact}",
+        f"dhcphost_name LIKE {_eip_q(like)}",
+        f"db_hostname LIKE {_eip_q(like)}",
+        f"dhcphost_mac_addr LIKE {_eip_q(like)}",
+        f"dhcpsn_name LIKE {_eip_q(like)}",
+        f"dhcpscope_name LIKE {_eip_q(like)}",
+    ])
+
+    dhcp_scope_where = " OR ".join([
+        f"dhcpsn_name LIKE {_eip_q(like)}",
+        f"dhcpscope_name LIKE {_eip_q(like)}",
+        f"dhcpscope_net_addr LIKE {_eip_q(like)}",
+        f"dhcp_name LIKE {_eip_q(like)}",
+    ])
+
+    dhcp_range_where = " OR ".join([
+        f"dhcpsn_name LIKE {_eip_q(like)}",
+        f"dhcpscope_name LIKE {_eip_q(like)}",
+        f"dhcprange_name LIKE {_eip_q(like)}",
+        f"dhcprange_start_addr LIKE {_eip_q(like)}",
+        f"dhcprange_end_addr LIKE {_eip_q(like)}",
+        f"dhcp_name LIKE {_eip_q(like)}",
+    ])
+
+    dns_rr_where = " OR ".join([
+        f"rr_full_name LIKE {_eip_q(like)}",
+        f"rr_all_value LIKE {_eip_q(like)}",
+        f"value1 LIKE {_eip_q(like)}",
+        f"value2 LIKE {_eip_q(like)}",
+        f"target LIKE {_eip_q(like)}",
+        f"dnszone_name LIKE {_eip_q(like)}",
+    ])
+
+    dns_zone_where = " OR ".join([
+        f"dnszone_name LIKE {_eip_q(like)}",
+        f"dns_name LIKE {_eip_q(like)}",
+        f"dnsview_name LIKE {_eip_q(like)}",
+    ])
+
+    error = ""
+    try:
+        ipam = _solidserver_search("/rest/ip_address_list", ipam_where, 100)
+        statics = _solidserver_search("/rest/dhcp_static_list", dhcp_static_where, 100)
+        scopes = _solidserver_search("/rest/dhcp_scope_list", dhcp_scope_where, 100)
+        ranges = _solidserver_search("/rest/dhcp_range_list", dhcp_range_where, 100)
+        rrs = _solidserver_search("/rest/dns_rr_list", dns_rr_where, 150)
+        zones = _solidserver_search("/rest/dns_zone_list", dns_zone_where, 50)
+    except Exception as exc:
+        ipam = statics = scopes = ranges = rrs = zones = []
+        error = str(exc)
+
+    arp_rows = safe_query("""
+        SELECT m.ipv4_address, m.mac_address, m.context_name,
+               COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device,
+               d.device_id, p.ifName, p.port_id, p.ifOperStatus
+        FROM ipv4_mac m
+        LEFT JOIN ports p ON p.port_id = m.port_id
+        LEFT JOIN devices d ON d.device_id = COALESCE(m.device_id, p.device_id)
+        WHERE m.ipv4_address LIKE %s OR m.mac_address LIKE %s OR d.hostname LIKE %s OR d.sysName LIKE %s OR p.ifName LIKE %s
+        ORDER BY m.ipv4_address
+        LIMIT 100
+    """, (f"%{q}%", f"%{q.replace(':','').replace('-','').replace('.','')}%", f"%{q}%", f"%{q}%", f"%{q}%"))
+
+    arp_body = ""
+    for row in arp_rows:
+        arp_body += f"""
+        <tr>
+          <td>{h(row.get('ipv4_address'))}</td>
+          <td>{h(fmt_mac(row.get('mac_address')))}</td>
+          <td><a href="/dashboard?device_ids={h(row.get('device_id'))}">{h(row.get('device'))}</a></td>
+          <td><a href="/interface/{h(row.get('port_id'))}">{h(row.get('ifName'))}</a></td>
+          <td>{h(row.get('ifOperStatus'))}</td>
+          <td>{h(row.get('context_name'))}</td>
+        </tr>
+        """
+
+    body = f"""
+    <section class="panel">
+      <h1>SolidServer Lookup</h1>
+      <form class="unused-controls" method="get" action="/tools/solidserver">
+        <input name="q" value="{h(q)}" placeholder="IP, hostname, FQDN, MAC, subnet, DNS value">
+        <button class="button" type="submit">Search</button>
+        <a class="button" href="/tools/solidserver">Clear</a>
+      </form>
+      {('<div class="unused-total">Lookup error: ' + h(error) + '</div>') if error else ''}
+    </section>
+
+    <section class="dashboard-grid">
+      {card("IPAM", len(ipam))}
+      {card("DHCP Static", len(statics))}
+      {card("DHCP Scopes", len(scopes))}
+      {card("DHCP Ranges", len(ranges))}
+      {card("DNS RRs", len(rrs))}
+      {card("DNS Zones", len(zones))}
+    </section>
+
+    <section class="panel"><h2>IPAM Address Records</h2>
+      {_solid_table(ipam, [("IP", "hostaddr"), ("Name", "name"), ("Alias", "ip_alias"), ("MAC", "mac_addr"), ("Subnet", "subnet_name"), ("Pool", "pool_name"), ("Last Seen", "last_seen"), ("Created By", "trace_creation_usr_login"), ("Updated", "trace_last_update_date")])}
+    </section>
+
+    <section class="panel"><h2>DHCP Static / Reservations</h2>
+      {_solid_table(statics, [("Name", "dhcphost_name"), ("IP", "dhcphost_addr"), ("MAC", "dhcphost_mac_addr"), ("DB Hostname", "db_hostname"), ("Scope", "dhcpscope_name"), ("Shared Network", "dhcpsn_name"), ("DHCP Server", "dhcp_name"), ("Last Seen", "dhcphost_last_seen"), ("Expire", "dhcphost_expire_time")])}
+    </section>
+
+    <section class="panel"><h2>DHCP Scopes</h2>
+      {_solid_table(scopes, [("Shared Network", "dhcpsn_name"), ("Scope", "dhcpscope_name"), ("Network", "dhcpscope_net_addr"), ("Mask", "dhcpscope_net_mask"), ("Prefix", "dhcpscope_prefix"), ("Size", "dhcpscope_size"), ("DHCP Server", "dhcp_name"), ("Failover", "dhcpfailover_name")])}
+    </section>
+
+    <section class="panel"><h2>DHCP Ranges</h2>
+      {_solid_table(ranges, [("Shared Network", "dhcpsn_name"), ("Scope", "dhcpscope_name"), ("Range", "dhcprange_name"), ("Start", "dhcprange_start_addr"), ("End", "dhcprange_end_addr"), ("Size", "dhcprange_size"), ("Lease Count", "dhcprange_lease_count"), ("Lease %", "dhcprange_lease_percent"), ("Server", "dhcp_name")])}
+    </section>
+
+    <section class="panel"><h2>DNS Resource Records</h2>
+      {_solid_table(rrs, [("Name", "rr_full_name"), ("Type", "rr_type"), ("Value", "rr_all_value"), ("Value1", "value1"), ("Zone", "dnszone_name"), ("View", "dnsview_name"), ("DNS Server", "dns_name"), ("TTL", "ttl"), ("Last Update Days", "rr_last_update_days")])}
+    </section>
+
+    <section class="panel"><h2>DNS Zones</h2>
+      {_solid_table(zones, [("Zone", "dnszone_name"), ("View", "dnsview_name"), ("Type", "dnszone_type"), ("DNS Server", "dns_name"), ("Reverse", "dnszone_is_reverse"), ("Masters", "dnszone_masters"), ("Also Notify", "dnszone_also_notify")])}
+    </section>
+
+    <section class="panel"><h2>LibreNMS ARP / IP / Port Correlation</h2>
+      {table(["IP", "MAC", "Device", "Interface", "Status", "Context"], arp_body) if arp_body else "<div class='unused-total'>No LibreNMS ARP/IP matches.</div>"}
+    </section>
+    """
+
+    return layout("SolidServer", body)
