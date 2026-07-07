@@ -19,7 +19,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, Response
 
 
-APP_NAME = os.getenv("PORTAL_NAME", "MiddKIPS")
+APP_NAME = os.getenv("PORTAL_NAME", "MiddKiPS")
 APP_ROOT_PATH = os.getenv("APP_ROOT_PATH", "").rstrip("/")
 LIBRENMS_BASE_URL = os.getenv("LIBRENMS_BASE_URL", "https://nms.jestertek.cc").rstrip("/")
 OXIDIZED_BASE_URL = os.getenv("OXIDIZED_BASE_URL", "https://nms.jestertek.cc/oxidized").rstrip("/")
@@ -608,28 +608,269 @@ def layout(title: str, body: str) -> str:
     /* In AKIPS two-column mode, device identity lives in the left selector */
     
 
+
+    /* AKIPS-style MiddKiPS header/dropdowns. Keep existing page/report CSS intact. */
+    .topbar {{
+      gap:0;
+      padding:0 10px 0 0;
+      min-height:42px;
+      overflow:visible;
+    }}
+    .brand {{
+      align-items:center;
+      border-right:1px solid var(--border);
+      display:flex;
+      min-height:42px;
+      padding:0 18px 0 14px;
+    }}
+    .brand a {{
+      align-items:baseline;
+      display:inline-flex;
+      font-size:28px;
+      font-weight:800;
+      letter-spacing:-0.055em;
+      line-height:1;
+      opacity:.95;
+    }}
+    .brand a:hover {{
+      color:var(--text);
+      text-decoration:none;
+    }}
+    .brand-m {{
+      color:#4d7fa8;
+      font-weight:900;
+    }}
+    .brand-rest {{
+      color:var(--muted);
+    }}
+    .main-nav {{
+      align-items:stretch;
+      display:flex;
+      flex-wrap:nowrap;
+      gap:0;
+      min-height:42px;
+    }}
+    .nav-item {{
+      position:relative;
+    }}
+    .nav-button {{
+      align-items:center;
+      color:var(--text);
+      cursor:default;
+      display:flex;
+      font-size:15px;
+      height:42px;
+      opacity:.88;
+      padding:0 14px;
+      user-select:none;
+    }}
+    .nav-item:hover > .nav-button {{
+      background:var(--panel);
+      opacity:1;
+    }}
+    .nav-menu {{
+      background:var(--panel);
+      border:1px solid var(--border);
+      box-shadow:0 8px 24px rgba(0,0,0,.28);
+      display:none;
+      left:0;
+      min-width:220px;
+      padding:7px 0;
+      position:absolute;
+      top:42px;
+      z-index:9999;
+    }}
+    :root[data-theme="light"] .nav-menu {{
+      box-shadow:0 8px 24px rgba(0,0,0,.16);
+    }}
+    .nav-item:hover > .nav-menu {{
+      display:block;
+    }}
+    .nav-section {{
+      border-top:1px solid var(--border);
+      color:var(--muted);
+      font-size:13px;
+      margin-top:5px;
+      padding:7px 14px 4px;
+    }}
+    .nav-section:first-child {{
+      border-top:0;
+      margin-top:0;
+    }}
+    .nav-menu a {{
+      color:var(--text);
+      display:block;
+      font-size:14px;
+      line-height:1.2;
+      opacity:.94;
+      padding:6px 20px;
+      text-decoration:none;
+    }}
+    .nav-menu a:hover {{
+      background:var(--table-hover);
+      color:var(--link);
+      text-decoration:none;
+    }}
+    .nav-row {{
+      position:relative;
+    }}
+    .nav-row > a::after {{
+      color:var(--muted);
+      content:"›";
+      position:absolute;
+      right:12px;
+    }}
+    .nav-submenu {{
+      background:var(--panel);
+      border:1px solid var(--border);
+      box-shadow:0 8px 24px rgba(0,0,0,.28);
+      display:none;
+      left:100%;
+      min-width:235px;
+      padding:7px 0;
+      position:absolute;
+      top:-7px;
+      z-index:10000;
+    }}
+    .nav-row:hover > .nav-submenu {{
+      display:block;
+    }}
+    .top-search {{
+      align-items:center;
+      margin-left:auto;
+      padding-left:12px;
+    }}
+    .top-search input {{
+      min-width:260px;
+    }}
+    .theme-toggle {{
+      margin-left:6px;
+      white-space:nowrap;
+    }}
+
   </style>
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><a href="/">MiddKIPS</a></div>
-  <nav>
-    <a href="/dashboard">Dashboard</a>
-    <a href="/devices">Devices</a>
-    <a href="/reports/interface-configuration">Interface Configuration</a>
-    <a href="/reports/interface-statistics">Interface Statistics</a>
-    <a href="/reports/unused-interfaces">Unused</a>
-    <a href="/reports/mac-table">MAC Table</a>
-    <a href="/reports/arp-ip">ARP/IP</a>
-    <a href="/tools/solidserver">SolidServer</a>
-    <a href="/reports/vlans">VLANs</a>
-    <a href="/reports/changes">Changes</a>
-    <a href="/reports/events">Events</a>
+  <div class="brand">
+    <a href="/"><span class="brand-m">M</span><span class="brand-rest">iddKiPS</span></a>
+  </div>
+
+  <nav class="main-nav">
+    <div class="nav-item">
+      <div class="nav-button">Dashboards</div>
+      <div class="nav-menu">
+        <div class="nav-section">Dashboards</div>
+        <a href="/">Overview</a>
+        <a href="/dashboard">Device</a>
+        <a href="/reports/events">Events</a>
+        <a href="/reports/interface-statistics">Interface</a>
+        <a href="https://raccoon.middlebury.edu:8443/" target="_blank" rel="noopener noreferrer">NetFlow / Arkarado</a>
+      </div>
+    </div>
+
+    <div class="nav-item">
+      <div class="nav-button">Reports</div>
+      <div class="nav-menu">
+        <div class="nav-row">
+          <a href="/reports/interface-statistics">Interface</a>
+          <div class="nav-submenu">
+            <div class="nav-section">Interface Reports</div>
+            <a href="/reports/interface-configuration">Interface Configuration</a>
+            <a href="/reports/interface-statistics">Interface Statistics</a>
+            <a href="/reports/unused-interfaces">Unused Interfaces</a>
+          </div>
+        </div>
+
+        <div class="nav-row">
+          <a href="/devices">Device</a>
+          <div class="nav-submenu">
+            <div class="nav-section">Device Reports</div>
+            <a href="/devices">Devices</a>
+            <a href="/reports/vlans">VLANs</a>
+            <a href="/reports/events">Events</a>
+          </div>
+        </div>
+
+        <div class="nav-section">Network</div>
+        <a href="/reports/mac-table">MAC Table</a>
+        <a href="/reports/arp-ip">ARP / IP</a>
+        <a href="/reports/vlans">VLANs</a>
+      </div>
+    </div>
+
+    <div class="nav-item">
+      <div class="nav-button">Topologies</div>
+      <div class="nav-menu">
+        <div class="nav-section">Recommended</div>
+        <a href="/tools/topologies">Topology Maps Home</a>
+        <a href="/tools/topology-vmap?site=vt&layout=mist_pods&show_core=1&show_services=1&show_distribution=1&show_access=1&show_nonmist_access=0&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0">Mist POD View</a>
+        <a href="/tools/topology-vmap?site=vt&layout=mist_pods&show_core=1&show_services=1&show_distribution=1&show_access=1&show_nonmist_access=1&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0">Mist POD + Non-Mist Inventory</a>
+        <a href="/tools/topology-vmap?site=vt&layout=mist_pods&show_core=1&show_services=1&show_distribution=1&show_access=1&show_nonmist_access=0&show_aps=0&show_ports=1&flow=1&redundant_only=1&tv=0">Mist POD + Ports</a>
+
+        <div class="nav-section">Core / Full</div>
+        <a href="/tools/topology-vmap?site=vt&show_core=1&show_services=1&show_distribution=1&show_access=0&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0">Core / Services / Distribution</a>
+        <a href="/tools/topology-vmap?site=vt&show_core=1&show_services=1&show_distribution=1&show_access=1&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0">Full V-Map</a>
+        <a href="/tools/topology-vmap?site=vt&show_core=1&show_services=1&show_distribution=1&show_access=1&show_aps=0&show_ports=1&flow=1&redundant_only=1&tv=0">Full V-Map + Ports</a>
+
+        <div class="nav-section">Legacy / Other</div>
+        <a href="/tools/topology-v2-split?q=core&limit=250&show_aps=0">Topology v2 Split</a>
+        <a href="/tools/topology-v2?q=core&limit=250&show_aps=0">Standard v2</a>
+        <a href="/tools/topology">Logical Topology</a>
+        <a href="/tools/mist/topology">Mist Logical Topology</a>
+
+        <div class="nav-section">Wallboard</div>
+        <a href="/tv/topology?zoom=1.35">TV Topology</a>
+        <a href="/tv/topology-wallboard">Topology Wallboard</a>
+      </div>
+    </div>
+
+    <div class="nav-item">
+      <div class="nav-button">Tools</div>
+      <div class="nav-menu">
+        <div class="nav-section">Lookup</div>
+        <a href="/lookup">Universal Lookup</a>
+        <a href="/tools/lookup">Lookup Hub</a>
+        <a href="/tools/lldp-lookup">LLDP Lookup</a>
+        <a href="/tools/unmatched-lldp-switches">Unmatched LLDP Switches</a>
+        <a href="/tools/mist">Mist Lookup</a>
+
+        <div class="nav-section">Config / DDI</div>
+        <a href="/config/">Config Lookup</a>
+        <a href="/tools/solidserver">SolidServer</a>
+      </div>
+    </div>
+
+    <div class="nav-item">
+      <div class="nav-button">NetOps</div>
+      <div class="nav-menu">
+        <div class="nav-section">Middlebury Ops</div>
+        <a href="/devices">LibreNMS Devices</a>
+        <a href="/reports/events">LibreNMS Events</a>
+        <a href="/tools/solidserver">SolidServer DDI</a>
+        <a href="/reports/unused-interfaces">Unused Interfaces</a>
+        <div class="nav-section">Switching</div>
+        <a href="/reports/interface-configuration">Interface Config</a>
+        <a href="/reports/interface-statistics">Interface Stats</a>
+        <a href="/reports/mac-table">MAC Table</a>
+        <a href="/reports/arp-ip">ARP / IP</a>
+      </div>
+    </div>
+
+    <div class="nav-item">
+      <div class="nav-button">Admin</div>
+      <div class="nav-menu">
+        <div class="nav-section">MiddKiPS</div>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/reports/events">Events</a>
+      </div>
+    </div>
   </nav>
-  <form class="top-search" action="/lookup" method="get">
-    <input name="q" placeholder="Lookup device, IP, MAC, VLAN, interface">
-    <button>Lookup</button>
-    <button id="themeToggle" type="button" onclick="toggleTheme()">Light</button>
+
+  <form class="top-search" method="get" action="/lookup">
+    <input name="q" placeholder="Universal lookup: IP, MAC, hostname, FQDN, VLAN, interface">
+    <button type="submit">Lookup</button>
+    <button class="theme-toggle" type="button" onclick="toggleTheme()">Theme</button>
   </form>
 </header>
 <main>{body}</main>
@@ -894,6 +1135,244 @@ def hidden_device_ids(selected_ids: list[int]) -> str:
 
 app = FastAPI(title=APP_NAME)
 
+
+def middkips_topology_hub_body():
+    cards = [
+        {
+            "title": "Mist POD View",
+            "badge": "Recommended",
+            "desc": "Mist-focused functional map grouped by POD, with Services and Non-Mist infrastructure available.",
+            "url": "/tools/topology-vmap?site=vt&layout=mist_pods&show_core=1&show_services=1&show_distribution=1&show_access=1&show_nonmist_access=0&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0",
+        },
+        {
+            "title": "Mist POD + Non-Mist Inventory",
+            "badge": "Expanded",
+            "desc": "Same Mist POD view, but also shows legacy/non-Mist access, site, AV, and specialty switches.",
+            "url": "/tools/topology-vmap?site=vt&layout=mist_pods&show_core=1&show_services=1&show_distribution=1&show_access=1&show_nonmist_access=1&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0",
+        },
+        {
+            "title": "Mist POD + Ports",
+            "badge": "Troubleshooting",
+            "desc": "Mist POD view with port labels enabled. Useful for tracing paths, ugly enough to be honest.",
+            "url": "/tools/topology-vmap?site=vt&layout=mist_pods&show_core=1&show_services=1&show_distribution=1&show_access=1&show_nonmist_access=0&show_aps=0&show_ports=1&flow=1&redundant_only=1&tv=0",
+        },
+        {
+            "title": "Transition View",
+            "badge": "Legacy bridge",
+            "desc": "Left-to-right view showing Mist, Services, and Non-Mist infrastructure.",
+            "url": "/tools/topology-vmap?site=vt&layout=transition&show_core=1&show_services=1&show_distribution=1&show_access=0&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0",
+        },
+        {
+            "title": "Core / Services / Distribution",
+            "badge": "Wallboard",
+            "desc": "Clean top-level infrastructure view with access hidden by default.",
+            "url": "/tools/topology-vmap?site=vt&show_core=1&show_services=1&show_distribution=1&show_access=0&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0",
+        },
+        {
+            "title": "Full V-Map",
+            "badge": "Everything-ish",
+            "desc": "Core, services, distribution, and access. Useful, but it will absolutely become a box farm.",
+            "url": "/tools/topology-vmap?site=vt&show_core=1&show_services=1&show_distribution=1&show_access=1&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0",
+        },
+        {
+            "title": "Full V-Map + Ports",
+            "badge": "Dense",
+            "desc": "Full V-map with link port labels enabled.",
+            "url": "/tools/topology-vmap?site=vt&show_core=1&show_services=1&show_distribution=1&show_access=1&show_aps=0&show_ports=1&flow=1&redundant_only=1&tv=0",
+        },
+        {
+            "title": "Topology v2 Split",
+            "badge": "Legacy",
+            "desc": "Older services-centered split view. Still useful for comparison and existing workflow muscle memory.",
+            "url": "/tools/topology-v2-split?q=core&limit=250&show_aps=0",
+        },
+        {
+            "title": "Standard v2",
+            "badge": "Legacy",
+            "desc": "Original v2 topology page.",
+            "url": "/tools/topology-v2?q=core&limit=250&show_aps=0",
+        },
+        {
+            "title": "TV Topology",
+            "badge": "Signage",
+            "desc": "Dedicated wallboard-friendly topology route.",
+            "url": "/tv/topology?zoom=1.35",
+        },
+        {
+            "title": "Client Search",
+            "badge": "Lookup",
+            "desc": "Find a client/device and jump into related information.",
+            "url": "/tools/client-search",
+        },
+        {
+            "title": "Universal Lookup",
+            "badge": "Search",
+            "desc": "IP, MAC, hostname, or fragment lookup.",
+            "url": "/tools/lookup",
+        },
+    ]
+
+    card_html = []
+    for c in cards:
+        card_html.append(
+            '<a class="topology-card" href="{url}">'
+            '<div class="card-top"><h3>{title}</h3><span>{badge}</span></div>'
+            '<p>{desc}</p>'
+            '</a>'.format(
+                url=c["url"],
+                title=c["title"],
+                badge=c["badge"],
+                desc=c["desc"],
+            )
+        )
+
+    return """
+<style>
+  .home-hero {
+    border:1px solid #334155;
+    border-radius:16px;
+    padding:18px;
+    background:linear-gradient(135deg,#0f172a,#111827);
+    margin-bottom:16px;
+  }
+
+  .home-hero h1 {
+    margin:0 0 8px 0;
+    color:#f8fafc;
+  }
+
+  .home-hero p {
+    color:#cbd5e1;
+    max-width:980px;
+    line-height:1.45;
+  }
+
+  .quick-actions {
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+    margin-top:14px;
+  }
+
+  .quick-actions a {
+    display:inline-flex;
+    align-items:center;
+    border:1px solid #334155;
+    border-radius:999px;
+    padding:8px 12px;
+    background:#020617;
+    color:#e5e7eb;
+    text-decoration:none;
+    font-weight:900;
+  }
+
+  .quick-actions a:hover {
+    border-color:#38bdf8;
+    background:#0f172a;
+  }
+
+  .topology-grid {
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+    gap:12px;
+  }
+
+  .topology-card {
+    display:block;
+    border:1px solid #334155;
+    border-radius:14px;
+    padding:14px;
+    background:#0f172a;
+    color:#e5e7eb;
+    text-decoration:none;
+    min-height:118px;
+  }
+
+  .topology-card:hover {
+    border-color:#38bdf8;
+    background:#111c33;
+  }
+
+  .card-top {
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:10px;
+    margin-bottom:8px;
+  }
+
+  .card-top h3 {
+    margin:0;
+    color:#f8fafc;
+    font-size:17px;
+  }
+
+  .card-top span {
+    flex:0 0 auto;
+    border:1px solid #475569;
+    border-radius:999px;
+    padding:3px 8px;
+    color:#93c5fd;
+    font-size:11px;
+    font-weight:900;
+    background:#020617;
+  }
+
+  .topology-card p {
+    margin:0;
+    color:#cbd5e1;
+    font-size:13px;
+    line-height:1.35;
+  }
+
+  .section-title {
+    margin:18px 0 10px 0;
+    color:#f8fafc;
+  }
+</style>
+
+<div class="home-hero">
+  <h1>MiddKiPS</h1>
+  <p>
+    Network visibility and operational tools for topology, lookup, LibreNMS/Oxidized workflows,
+    and campus infrastructure mapping. The recommended starting point is the Mist POD View,
+    because apparently even topology pages need a sensible front door.
+  </p>
+  <div class="quick-actions">
+    <a href="/tools/topologies">Topology Maps</a>
+    <a href="/tools/topology-vmap?site=vt&layout=mist_pods&show_core=1&show_services=1&show_distribution=1&show_access=1&show_nonmist_access=0&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0">Mist POD View</a>
+    <a href="/tools/lookup">Universal Lookup</a>
+    <a href="/tools/client-search">Client Search</a>
+    <a href="/tv/topology?zoom=1.35">TV Topology</a>
+  </div>
+</div>
+
+<h2 class="section-title">Topology Maps</h2>
+<div class="topology-grid">
+""" + "".join(card_html) + """
+</div>
+"""
+
+
+def middkips_home_body():
+    return middkips_topology_hub_body()
+
+
+@app.get("/", response_class=HTMLResponse)
+def middkips_home():
+    return globals()["layout"]("MiddKiPS", middkips_home_body())
+
+
+@app.get("/tools/topologies", response_class=HTMLResponse)
+def topology_maps_menu():
+    return globals()["layout"]("Topology Maps", middkips_topology_hub_body())
+
+
+@app.get("/topologies", response_class=HTMLResponse)
+def topology_maps_menu_shortcut():
+    return globals()["layout"]("Topology Maps", middkips_topology_hub_body())
+
+
 @app.get("/healthz")
 def healthz():
     try:
@@ -901,66 +1380,6 @@ def healthz():
         return {"status": "ok", "database": bool(row.get("ok"))}
     except Exception as exc:
         return {"status": "error", "database": False, "error": str(exc)}
-
-
-
-@app.get("/", response_class=HTMLResponse)
-def home():
-    devices = fetch_one("""
-        SELECT COUNT(*) AS total,
-               SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS up_count,
-               SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) AS down_count
-        FROM devices
-    """)
-    ports = fetch_one("""
-        SELECT COUNT(*) AS total,
-               SUM(CASE WHEN ifOperStatus = 'up' THEN 1 ELSE 0 END) AS up_count,
-               SUM(CASE WHEN ifOperStatus = 'down' THEN 1 ELSE 0 END) AS down_count
-        FROM ports
-    """)
-    busy = fetch_all("""
-        SELECT COALESCE(NULLIF(d.sysName,''), NULLIF(d.hostname,''), INET6_NTOA(d.ip)) AS device, d.device_id, p.port_id, p.ifName, p.ifAlias, p.ifSpeed,
-               p.ifOperStatus, p.ifInOctets_rate, p.ifOutOctets_rate
-        FROM ports p
-        JOIN devices d ON d.device_id = p.device_id
-        ORDER BY COALESCE(p.ifInOctets_rate,0) + COALESCE(p.ifOutOctets_rate,0) DESC
-        LIMIT 30
-    """)
-    rows = ""
-    for row in busy:
-        rows += f"""
-        <tr>
-          <td>{device_anchor(row)}</td>
-          <td>{interface_anchor(row)}</td>
-          <td class="status-cell">{status_badge(row.get('ifOperStatus'))}</td>
-          <td>{h(fmt_speed(row.get('ifSpeed')))}</td>
-          <td>{h(fmt_rate(row.get('ifInOctets_rate')))}</td>
-          <td>{h(fmt_rate(row.get('ifOutOctets_rate')))}</td>
-          <td>{h(row.get('ifAlias'))}</td>
-        </tr>"""
-    body = f"""
-<section class="hero">
-  <h1>MiddKIPS</h1>
-  <p>Middlebury KIPS-style network portal powered by LibreNMS.</p>
-</section>
-<section class="cards">
-  {card("Devices", devices.get("total") or 0)}
-  {card("Devices Up", devices.get("up_count") or 0)}
-  {card("Devices Down", devices.get("down_count") or 0)}
-  {card("Ports", ports.get("total") or 0)}
-  {card("Ports Up", ports.get("up_count") or 0)}
-  {card("Ports Down", ports.get("down_count") or 0)}
-</section>
-<section class="panel">
-  <div class="panel-head">
-    <h2>Top Activity</h2>
-    <a class="button" href="/devices">Browse Devices</a>
-  </div>
-  {table(["Device", "Interface", "Status", "Speed", "In", "Out", "Title"], rows)}
-</section>
-"""
-    return layout("Home", body)
-
 
 
 
@@ -1072,444 +1491,6 @@ def _diag_layout(title: str, device_id: int, q: str, device_ids: str, body: str)
     if device_id not in selected_ids:
         selected_ids = [device_id] + selected_ids
     return layout(title, two_col("/dashboard", selected_ids, q, body))
-
-
-@app.get("/device/{device_id}/config.txt")
-def download_device_config(device_id: int):
-    import os
-    import re
-    import socket
-    from urllib.parse import quote
-
-    import pymysql
-    import requests
-    from fastapi.responses import PlainTextResponse, Response
-
-    def fail(status_code, message):
-        return PlainTextResponse(str(message).rstrip() + "\n", status_code=status_code)
-
-    def env_value(*names, default=None):
-        for name in names:
-            value = os.environ.get(name)
-            if value not in (None, ""):
-                return value
-        return default
-
-    def db_lookup_device(dev_id):
-        sql = """
-            SELECT device_id, hostname, sysName, os, type
-            FROM devices
-            WHERE device_id = %s
-            LIMIT 1
-        """
-
-        host = env_value("LIBRENMS_DB_HOST", "DB_HOST", "MYSQL_HOST", default="db")
-        user = env_value("LIBRENMS_DB_USER", "DB_USER", "MYSQL_USER", default="librenms")
-        password = env_value("LIBRENMS_DB_PASS", "LIBRENMS_DB_PASSWORD", "DB_PASS", "DB_PASSWORD", "MYSQL_PASSWORD")
-        database = env_value("LIBRENMS_DB_NAME", "DB_NAME", "MYSQL_DATABASE", default="librenms")
-        port = int(env_value("LIBRENMS_DB_PORT", "DB_PORT", "MYSQL_PORT", default="3306"))
-
-        conn = pymysql.connect(
-            host=host,
-            user=user,
-            password=password,
-            database=database,
-            port=port,
-            cursorclass=pymysql.cursors.DictCursor,
-            connect_timeout=5,
-            read_timeout=10,
-            write_timeout=10,
-        )
-
-        try:
-            with conn.cursor() as cur:
-                cur.execute(sql, (dev_id,))
-                return cur.fetchone()
-        finally:
-            conn.close()
-
-    def resolve_ipv4(value):
-        value = str(value or "").strip()
-        if not value:
-            return None
-
-        if re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", value):
-            return value
-
-        candidates = [value]
-        if "." not in value:
-            candidates.append(value + ".middlebury.edu")
-
-        for name in candidates:
-            try:
-                answers = socket.getaddrinfo(name, None, socket.AF_INET)
-                for answer in answers:
-                    ip = answer[4][0]
-                    if ip:
-                        return ip
-            except Exception:
-                pass
-
-        return None
-
-    try:
-        device = db_lookup_device(device_id)
-    except Exception as exc:
-        return fail(500, f"LibreNMS device lookup failed for device_id={device_id}: {exc}")
-
-    if not device:
-        return fail(404, f"No LibreNMS device found for device_id={device_id}")
-
-    hostname = device.get("hostname")
-    sysname = device.get("sysName")
-
-    mgmt_ip = None
-    resolved_from = None
-
-    for candidate in [hostname, sysname]:
-        mgmt_ip = resolve_ipv4(candidate)
-        if mgmt_ip:
-            resolved_from = candidate
-            break
-
-    if not mgmt_ip:
-        return fail(
-            404,
-            f"Could not resolve management IP for device_id={device_id}; hostname={hostname} sysName={sysname}",
-        )
-
-    oxidized_url = env_value("OXIDIZED_URL", default="http://127.0.0.1:8888").rstrip("/")
-
-    try:
-        nodes_resp = requests.get(f"{oxidized_url}/nodes.json", timeout=10)
-    except Exception as exc:
-        return fail(502, f"Could not reach Oxidized nodes.json: {exc}")
-
-    if nodes_resp.status_code != 200:
-        return fail(502, f"Oxidized nodes.json returned HTTP {nodes_resp.status_code}")
-
-    try:
-        nodes = nodes_resp.json()
-    except Exception as exc:
-        return fail(502, f"Could not parse Oxidized nodes.json: {exc}")
-
-    if isinstance(nodes, dict):
-        nodes = nodes.get("nodes") or nodes.get("data") or []
-
-    match = None
-
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
-
-        for value in [node.get("name"), node.get("ip")]:
-            if str(value or "").strip() == mgmt_ip:
-                match = node
-                break
-
-        if match:
-            break
-
-    if not match:
-        return fail(
-            404,
-            f"No Oxidized node matched device_id={device_id}; resolved_from={resolved_from} mgmt_ip={mgmt_ip}",
-        )
-
-    node_name = str(match.get("name") or match.get("ip") or mgmt_ip)
-    group = match.get("group")
-
-    full_name = str(match.get("full_name") or "")
-    if not group and "/" in full_name:
-        group = full_name.split("/", 1)[0]
-
-    if not group:
-        return fail(502, f"Matched Oxidized node has no group: {match}")
-
-    fetch_url = f"{oxidized_url}/node/fetch/{quote(str(group), safe='')}/{quote(node_name, safe='')}"
-
-    try:
-        config_resp = requests.get(fetch_url, timeout=20)
-    except Exception as exc:
-        return fail(502, f"Could not fetch Oxidized config from {fetch_url}: {exc}")
-
-    body = config_resp.content or b""
-    body_text = body.decode("utf-8", errors="replace")
-
-    if config_resp.status_code != 200:
-        return fail(502, f"Oxidized config fetch returned HTTP {config_resp.status_code} for {group}/{node_name}")
-
-    if "unable to find" in body_text.lower():
-        return fail(404, body_text)
-
-    if len(body) < 100:
-        return fail(502, f"Oxidized config fetch returned suspiciously small body: bytes={len(body)} group={group} node={node_name}")
-
-    filename_base = str(hostname or node_name or f"device-{device_id}")
-    filename_base = re.sub(r"[^A-Za-z0-9._-]+", "_", filename_base).strip("_")
-    if not filename_base:
-        filename_base = f"device-{device_id}"
-
-    return Response(
-        content=body,
-        media_type="text/plain",
-        headers={"Content-Disposition": f'attachment; filename="{filename_base}.txt"'},
-    )
-
-    import os
-    import re
-    import socket
-    from urllib.parse import quote
-
-    import pymysql
-    import requests
-    from fastapi.responses import PlainTextResponse, Response
-
-    def fail(status_code, message):
-        return PlainTextResponse(str(message).rstrip() + "\n", status_code=status_code)
-
-    def env_value(*names, default=None):
-        for name in names:
-            value = os.environ.get(name)
-            if value not in (None, ""):
-                return value
-        return default
-
-    def db_lookup_device(dev_id):
-        sql = """
-            SELECT device_id, hostname, sysName, os, type
-            FROM devices
-            WHERE device_id = %s
-            LIMIT 1
-        """
-
-        host = env_value("LIBRENMS_DB_HOST", "DB_HOST", "MYSQL_HOST", default="db")
-        user = env_value("LIBRENMS_DB_USER", "DB_USER", "MYSQL_USER", default="librenms")
-        password = env_value("LIBRENMS_DB_PASS", "LIBRENMS_DB_PASSWORD", "DB_PASS", "DB_PASSWORD", "MYSQL_PASSWORD")
-        database = env_value("LIBRENMS_DB_NAME", "DB_NAME", "MYSQL_DATABASE", default="librenms")
-        port = int(env_value("LIBRENMS_DB_PORT", "DB_PORT", "MYSQL_PORT", default="3306"))
-
-        conn = pymysql.connect(
-            host=host,
-            user=user,
-            password=password,
-            database=database,
-            port=port,
-            cursorclass=pymysql.cursors.DictCursor,
-            connect_timeout=5,
-            read_timeout=10,
-            write_timeout=10,
-        )
-
-        try:
-            with conn.cursor() as cur:
-                cur.execute(sql, (dev_id,))
-                return cur.fetchone()
-        finally:
-            conn.close()
-
-    def resolve_ipv4(value):
-        value = str(value or "").strip()
-        if not value:
-            return None
-
-        if re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", value):
-            return value
-
-        candidates = [value]
-        if "." not in value:
-            candidates.append(value + ".middlebury.edu")
-
-        for name in candidates:
-            try:
-                answers = socket.getaddrinfo(name, None, socket.AF_INET)
-                for answer in answers:
-                    ip = answer[4][0]
-                    if ip:
-                        return ip
-            except Exception:
-                pass
-
-        return None
-
-    try:
-        device = db_lookup_device(device_id)
-    except Exception as exc:
-        return fail(500, f"LibreNMS device lookup failed for device_id={device_id}: {exc}")
-
-    if not device:
-        return fail(404, f"No LibreNMS device found for device_id={device_id}")
-
-    hostname = device.get("hostname")
-    sysname = device.get("sysName")
-
-    mgmt_ip = None
-    resolved_from = None
-
-    for candidate in [hostname, sysname]:
-        mgmt_ip = resolve_ipv4(candidate)
-        if mgmt_ip:
-            resolved_from = candidate
-            break
-
-    if not mgmt_ip:
-        return fail(
-            404,
-            f"Could not resolve management IP for device_id={device_id}; hostname={hostname} sysName={sysname}",
-        )
-
-    oxidized_url = env_value("OXIDIZED_URL", default="http://127.0.0.1:8888").rstrip("/")
-
-    try:
-        nodes_resp = requests.get(f"{oxidized_url}/nodes.json", timeout=10)
-    except Exception as exc:
-        return fail(502, f"Could not reach Oxidized nodes.json: {exc}")
-
-    if nodes_resp.status_code != 200:
-        return fail(502, f"Oxidized nodes.json returned HTTP {nodes_resp.status_code}")
-
-    try:
-        nodes = nodes_resp.json()
-    except Exception as exc:
-        return fail(502, f"Could not parse Oxidized nodes.json: {exc}")
-
-    if isinstance(nodes, dict):
-        nodes = nodes.get("nodes") or nodes.get("data") or []
-
-    match = None
-
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
-
-        for value in [node.get("name"), node.get("ip")]:
-            if str(value or "").strip() == mgmt_ip:
-                match = node
-                break
-
-        if match:
-            break
-
-    if not match:
-        return fail(
-            404,
-            f"No Oxidized node matched device_id={device_id}; resolved_from={resolved_from} mgmt_ip={mgmt_ip}",
-        )
-
-    node_name = str(match.get("name") or match.get("ip") or mgmt_ip)
-    group = match.get("group")
-
-    full_name = str(match.get("full_name") or "")
-    if not group and "/" in full_name:
-        group = full_name.split("/", 1)[0]
-
-    if not group:
-        return fail(502, f"Matched Oxidized node has no group: {match}")
-
-    fetch_url = f"{oxidized_url}/node/fetch/{quote(str(group), safe='')}/{quote(node_name, safe='')}"
-
-    try:
-        config_resp = requests.get(fetch_url, timeout=20)
-    except Exception as exc:
-        return fail(502, f"Could not fetch Oxidized config from {fetch_url}: {exc}")
-
-    body = config_resp.content or b""
-    body_text = body.decode("utf-8", errors="replace")
-
-    if config_resp.status_code != 200:
-        return fail(502, f"Oxidized config fetch returned HTTP {config_resp.status_code} for {group}/{node_name}")
-
-    if "unable to find" in body_text.lower():
-        return fail(404, body_text)
-
-    if len(body) < 100:
-        return fail(502, f"Oxidized config fetch returned suspiciously small body: bytes={len(body)} group={group} node={node_name}")
-
-    filename_base = str(hostname or node_name or f"device-{device_id}")
-    filename_base = re.sub(r"[^A-Za-z0-9._-]+", "_", filename_base).strip("_")
-    if not filename_base:
-        filename_base = f"device-{device_id}"
-
-    return Response(
-        content=body,
-        media_type="text/plain",
-        headers={"Content-Disposition": f'attachment; filename="{filename_base}.txt"'},
-    )
-
-    try:
-        dev = _device_diag_record(device_id)
-        if not dev:
-            return Response("Device not found\n", status_code=404, media_type="text/plain")
-
-        node_candidates = []
-        for val in (dev.get("sysName"), dev.get("hostname"), dev.get("device"), dev.get("ip_addr")):
-            if val:
-                sval = str(val).strip()
-                if sval and sval not in node_candidates:
-                    node_candidates.append(sval)
-
-        base_candidates = []
-        for base in (
-            os.getenv("OXIDIZED_INTERNAL_URL", "").rstrip("/"),
-            OXIDIZED_BASE_URL.rstrip("/") if OXIDIZED_BASE_URL else "",
-            "http://127.0.0.1:8888",
-            "http://localhost:8888",
-        ):
-            if base and base not in base_candidates:
-                base_candidates.append(base)
-
-        errors = []
-        context = ssl._create_unverified_context()
-
-        for base in base_candidates:
-            for node in node_candidates:
-                qnode = urllib.parse.quote(node, safe="")
-                urls = [
-                    f"{base}/node/fetch/{qnode}",
-                    f"{base}/node/fetch/default/{qnode}",
-                    f"{base}/node/show/{qnode}",
-                    f"{base}/node/show/default/{qnode}",
-                ]
-
-                for url in urls:
-                    try:
-                        req = urllib.request.Request(url, headers={"User-Agent": "MiddKIPS config downloader"})
-                        with urllib.request.urlopen(req, timeout=12, context=context) as resp:
-                            data = resp.read()
-
-                        preview = data[:300].lower()
-                        if b"<html" in preview or b"<!doctype" in preview:
-                            errors.append(f"{url}: returned HTML, not config text")
-                            continue
-
-                        if not data.strip():
-                            errors.append(f"{url}: empty response")
-                            continue
-
-                        filename = f"{node}.txt".replace("/", "_").replace("\\", "_")
-                        return Response(
-                            data,
-                            media_type="text/plain",
-                            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-                        )
-                    except Exception as exc:
-                        errors.append(f"{url}: {exc}")
-
-        return Response(
-            "Unable to fetch config from Oxidized.\n\n"
-            + "Nodes tried:\n"
-            + "\n".join(f"- {x}" for x in node_candidates)
-            + "\n\nBases tried:\n"
-            + "\n".join(f"- {x}" for x in base_candidates)
-            + "\n\nErrors:\n"
-            + "\n".join(errors[-30:])
-            + "\n",
-            status_code=404,
-            media_type="text/plain",
-        )
-
-    except Exception as exc:
-        return Response(f"Config download error: {exc}\n", status_code=500, media_type="text/plain")
 
 
 @app.get("/device/{device_id}/ping", response_class=HTMLResponse)
@@ -2908,24 +2889,30 @@ def events(q: str = "", device_ids: str = "", limit: int = 250):
 
 
 @app.get("/lookup", response_class=HTMLResponse)
-def lookup(q: str = ""):
-    q = (q or "").strip()
-    if not q:
-        return layout("Lookup", "<section class='panel'><h1>Lookup</h1><p>Enter a device, IP, MAC, VLAN, or interface in the lookup box.</p></section>")
-    like = f"%{q}%"
-    qmac = q.replace(":", "").replace("-", "").replace(".", "")
-    devices = fetch_all("""
-        SELECT device_id, hostname, ip, os, hardware, location_id AS location, status
-        FROM devices
-        WHERE hostname LIKE %s OR ip LIKE %s OR CAST(location_id AS CHAR) LIKE %s OR hardware LIKE %s
-        ORDER BY hostname LIMIT 50
-    """, (like, like, like, like))
-    dev_rows = ""
-    for row in devices:
-        status = "up" if row.get("status") == 1 else "down"
-        dev_rows += f"<tr><td>{device_anchor(row, 'hostname')}</td><td>{h(fmt_ip(row.get('ip_addr') or row.get('ip')))}</td><td>{h(row.get('hardware'))}</td><td>{h(row.get('location'))}</td><td class='status-cell'>{status_badge(status)}</td></tr>"
-    body = f"<section class='panel'><h1>Lookup: {h(q)}</h1></section><section class='panel'><h2>Devices</h2>{table(['Device','IPv4','Hardware','Location','Status'], dev_rows)}</section>"
-    return layout("Lookup", body)
+def lookup(q: str = "", limit: int = 50):
+    from app.services.middkips_universal_page import render_universal_lookup_page
+    body = render_universal_lookup_page(q=q, limit=limit)
+    return layout("Universal Lookup", body)
+
+
+
+
+@app.get("/config/", response_class=HTMLResponse)
+def config_lookup_landing():
+    body = """
+    <section class="panel">
+      <h1>Config Lookup</h1>
+      <p class="muted">Enter a hostname or device name to open matching config tools.</p>
+      <form method="get" action="/tools/lookup" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+        <input name="q" placeholder="hostname, FQDN, IP, MAC" style="min-width:360px;">
+        <button type="submit">Lookup</button>
+      </form>
+      <p class="muted" style="margin-top:12px;">
+        Direct config links use <code>/config/&lt;hostname&gt;</code>.
+      </p>
+    </section>
+    """
+    return globals()["layout"]("Config Lookup", body)
 
 
 @app.get("/config/{hostname}", response_class=HTMLResponse)
@@ -2940,6 +2927,129 @@ def config_links(hostname: str):
 </section>
 """
     return layout("Config Links", body)
+
+
+@app.get("/device/{device_id}/config.txt")
+def device_config_txt(device_id: int):
+    import os
+    import re
+    import urllib.parse
+    import requests
+    from fastapi.responses import Response, PlainTextResponse
+
+    rows = fetch_all("""
+        SELECT device_id, hostname, sysName, ip, status
+        FROM devices
+        WHERE device_id = %s
+        LIMIT 1
+    """, (device_id,))
+
+    if not rows:
+        return PlainTextResponse(f"Device {device_id} not found\\n", status_code=404)
+
+    dev = rows[0]
+    hostname = (dev.get("hostname") or dev.get("sysName") or "").strip()
+    ip = fmt_ip(dev.get("ip_addr") or dev.get("ip")).strip()
+
+    display_name = hostname or ip or f"device-{device_id}"
+    safe_filename = re.sub(r"[^A-Za-z0-9_.-]+", "_", display_name).strip("_") or f"device-{device_id}"
+
+    oxidized_api = os.environ.get("OXIDIZED_API_URL", "http://127.0.0.1:8888").rstrip("/")
+
+    candidates = []
+    for value in [ip, hostname, hostname.lower(), hostname.upper()]:
+        if value and value not in candidates:
+            candidates.append(value)
+
+    errors = []
+    fetch_paths = []
+
+    try:
+        r = requests.get(f"{oxidized_api}/nodes.json", timeout=10)
+        r.raise_for_status()
+        nodes = r.json()
+
+        for node in nodes:
+            name = str(node.get("name") or "")
+            full_name = str(node.get("full_name") or "")
+            group = str(node.get("group") or "")
+            full_leaf = full_name.split("/", 1)[-1] if "/" in full_name else full_name
+
+            if name in candidates or full_leaf in candidates or full_name in candidates:
+                if full_name:
+                    fetch_paths.append(full_name)
+                if group and name:
+                    fetch_paths.append(f"{group}/{name}")
+                if name:
+                    fetch_paths.append(name)
+                break
+
+    except Exception as exc:
+        errors.append(f"nodes.json lookup failed: {exc}")
+
+    for value in candidates:
+        fetch_paths.append(value)
+        fetch_paths.append(f"junos/{value}")
+        fetch_paths.append(f"arubaos-cx/{value}")
+        fetch_paths.append(f"panos/{value}")
+
+    unique_fetch_paths = []
+    seen = set()
+    for path in fetch_paths:
+        if path and path not in seen:
+            unique_fetch_paths.append(path)
+            seen.add(path)
+
+    for fetch_path in unique_fetch_paths:
+        try:
+            encoded = urllib.parse.quote(fetch_path, safe="/")
+            url = f"{oxidized_api}/node/fetch/{encoded}"
+            r = requests.get(url, timeout=20)
+
+            if r.status_code == 200 and r.text.strip():
+                config_text = r.text
+                detected_hostname = ""
+
+                for line in config_text.splitlines()[:100]:
+                    m = re.search(r"^\s*#\s*Hostname:\s*(\S+)", line, re.IGNORECASE)
+                    if m:
+                        detected_hostname = m.group(1)
+                        break
+
+                    m = re.search(r"^\s*set\s+system\s+host-name\s+(\S+)", line, re.IGNORECASE)
+                    if m:
+                        detected_hostname = m.group(1).strip(";")
+                        break
+
+                    m = re.search(r"^\s*hostname\s+(\S+)", line, re.IGNORECASE)
+                    if m:
+                        detected_hostname = m.group(1).strip(";")
+                        break
+
+                download_name = detected_hostname or display_name
+                download_filename = re.sub(r"[^A-Za-z0-9_.-]+", "_", download_name).strip("_") or safe_filename
+
+                return Response(
+                    content=config_text,
+                    media_type="text/plain; charset=utf-8",
+                    headers={
+                        "Content-Disposition": f'attachment; filename="{download_filename}.txt"',
+                        "X-MiddKiPS-Config-Source": fetch_path,
+                    },
+                )
+
+            errors.append(f"{fetch_path}: HTTP {r.status_code}")
+
+        except Exception as exc:
+            errors.append(f"{fetch_path}: {exc}")
+
+    body = (
+        f"Unable to fetch Oxidized config for {display_name} / device_id {device_id}\\n\\n"
+        f"Tried candidates: {', '.join(unique_fetch_paths)}\\n\\n"
+        "Errors:\\n" + "\\n".join(errors[-20:]) + "\\n"
+    )
+
+    return PlainTextResponse(body, status_code=404)
 
 
 @app.get("/interface/{port_id}", response_class=HTMLResponse)
@@ -3759,6 +3869,144 @@ def _solidserver_dashboard_html() -> str:
     """
 
 
+
+
+@app.get("/tools/lookup", response_class=HTMLResponse)
+def tools_lookup(q: str = ""):
+    from app.services.middkips_lookup_hub import render_lookup_hub_page
+    body = render_lookup_hub_page(q=q)
+    return layout("Lookup Tools", body)
+
+
+@app.get("/lookup.csv")
+def lookup_csv(q: str = "", limit: int = 50):
+    import csv
+    import io
+    import json
+    import re
+    from fastapi.responses import Response
+    from app.services.universal_tool import universal_context
+
+    q = (q or "").strip()
+    try:
+        limit = int(limit or 50)
+    except Exception:
+        limit = 50
+
+    def clean(value):
+        if value is None:
+            return ""
+        if isinstance(value, (dict, list, tuple)):
+            value = json.dumps(value, default=str)
+        value = str(value)
+        value = re.sub(r"<[^>]+>", "", value)
+        value = re.sub(r"\s+", " ", value).strip()
+        return value
+
+    ctx = universal_context(q=q, limit=limit)
+
+    rows = []
+
+    for row in ctx.get("entity_rows", []) or []:
+        if isinstance(row, dict):
+            out = {"section": "Correlated Summary"}
+            out.update(row)
+            rows.append(out)
+
+    for sec in ctx.get("sections", []) or []:
+        title = sec.get("title") or "Section"
+        for row in sec.get("rows", []) or sec.get("preview_rows", []) or []:
+            if isinstance(row, dict):
+                out = {"section": title}
+                out.update(row)
+                rows.append(out)
+
+    preferred = [
+        "section", "kind", "name", "sources", "status", "ip", "mac", "site",
+        "role", "model", "version", "serial", "device", "interface", "title",
+        "type", "value", "zone", "view", "time", "message", "user", "id",
+    ]
+
+    all_keys = []
+    for key in preferred:
+        if any(key in r for r in rows):
+            all_keys.append(key)
+
+    for row in rows:
+        for key in row.keys():
+            if key not in all_keys:
+                all_keys.append(key)
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=all_keys, extrasaction="ignore")
+    writer.writeheader()
+
+    for row in rows:
+        writer.writerow({k: clean(v) for k, v in row.items()})
+
+    safe_q = re.sub(r"[^A-Za-z0-9_.-]+", "_", q or "lookup").strip("_")[:80]
+    filename = f"middkips-lookup-{safe_q}.csv"
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+
+@app.get("/tools/topology", response_class=HTMLResponse)
+def tools_topology(q: str = "", limit: int = 50):
+    from app.services.middkips_mist_topology import render_mist_topology_page
+    body = render_mist_topology_page(q=q, limit=limit)
+    return layout("Logical Topology", body)
+
+@app.get("/tools/mist/topology", response_class=HTMLResponse)
+def tools_mist_topology(q: str = "", limit: int = 250):
+    from app.services.middkips_mist_topology import render_mist_topology_page
+    body = render_mist_topology_page(q=q, limit=limit)
+    return layout("Mist Logical Topology", body)
+
+@app.get("/tools/mist", response_class=HTMLResponse)
+def tools_mist(q: str = "", limit: int = 50):
+    from app.services.middkips_mist_page import render_mist_lookup_page
+    body = render_mist_lookup_page(q=q, limit=limit)
+    return layout("Mist Lookup", body)
+
+
+@app.get("/tools/mist/site/{site_id}", response_class=HTMLResponse)
+def tools_mist_site(site_id: str, limit: int = 100):
+    try:
+        from app.services.middkips_mist_page import render_mist_site_page
+        body = render_mist_site_page(site_id=site_id, limit=limit)
+    except Exception as exc:
+        body = f"""
+        <section class="panel">
+          <h1>Mist Site Error</h1>
+          <p class="muted">Could not load Mist site detail for {h(site_id)}.</p>
+          <pre>{h(exc)}</pre>
+          <a class="button" href="/tools/mist">Back to Mist Lookup</a>
+        </section>
+        """
+    return layout("Mist Site", body)
+
+
+@app.get("/tools/mist/switch/{site_id}/{mac}", response_class=HTMLResponse)
+def tools_mist_switch(site_id: str, mac: str):
+    try:
+        from app.services.middkips_mist_page import render_mist_switch_page
+        body = render_mist_switch_page(site_id=site_id, mac=mac)
+    except Exception as exc:
+        body = f"""
+        <section class="panel">
+          <h1>Mist Switch Error</h1>
+          <p class="muted">Could not load Mist switch detail for site {h(site_id)} / MAC {h(mac)}.</p>
+          <pre>{h(exc)}</pre>
+          <a class="button" href="/tools/mist">Back to Mist Lookup</a>
+        </section>
+        """
+    return layout("Mist Switch", body)
+
 @app.get("/tools/solidserver", response_class=HTMLResponse)
 def tools_solidserver(q: str = ""):
     q = (q or "").strip()
@@ -3918,3 +4166,313 @@ def tools_solidserver(q: str = ""):
     """
 
     return layout("SolidServer", body)
+
+
+@app.get("/tools/topology-v2", response_class=HTMLResponse)
+def tools_topology_v2(q: str = "", limit: int = 50, show_aps: str = "0"):
+    from app.services.middkips_topology_v2_page import render_topology_v2_page
+    body = render_topology_v2_page(q=q, limit=limit, show_aps=show_aps)
+    return layout("Logical Topology v2", body)
+
+
+@app.get("/tools/mist/clients-v2", response_class=HTMLResponse)
+def tools_mist_clients_v2(q: str = "", limit: int = 50):
+    from app.services.middkips_mist_clients_v2_page import render_mist_clients_v2_page
+    body = render_mist_clients_v2_page(q=q, limit=limit)
+    return layout("Mist Client Search v2", body)
+
+
+@app.get("/tools/topology-v2-split", response_class=HTMLResponse)
+def tools_topology_v2_split(q: str = "", limit: int = 50, show_aps: str = "0", focus: str = ""):
+    from app.services.middkips_topology_v2_split_page import render_topology_v2_split_page
+    body = render_topology_v2_split_page(q=q, limit=limit, show_aps=show_aps, focus=focus)
+    return layout("Topology v2 Split", body)
+
+
+
+
+@app.get("/tv/topology", response_class=HTMLResponse)
+def tv_topology(zoom: str = "1.35",
+    show_nonmist_access: str = "0"):
+    from app.services.middkips_topology_vmap_page import render_topology_vmap_page
+
+    try:
+        zoom_value = float(zoom)
+    except Exception:
+        zoom_value = 1.35
+
+    # Keep humans from entering 400x and accidentally summoning a graph kaiju.
+    zoom_value = max(0.75, min(2.75, zoom_value))
+
+    body = render_topology_vmap_page(
+        site="vt",
+        show_ports="0",
+        show_aps="0",
+        show_core="1",
+        show_services="1",
+        show_distribution="1",
+        show_access="0",
+        flow="1",
+        redundant_only="1",
+        tv="1",
+        show_nonmist_access=show_nonmist_access)
+
+    scaled_body = (
+        f'<div class="tv-scale-spacer" style="--tv-scale:{zoom_value};">'
+        f'<div class="tv-scale">{body}</div>'
+        f'</div>'
+    )
+
+    extra_css = """
+    <style>
+      html, body {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100vw;
+        min-height: 100vh;
+        overflow: auto !important;
+        background: #111827;
+        color: #e5e7eb;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      main, .container, .content {
+        margin: 0 !important;
+        padding: 0 !important;
+        max-width: none !important;
+        width: 100vw !important;
+      }
+
+      h1 {
+        font-size: 28px;
+        margin: 10px 18px 4px 18px;
+      }
+
+      .toolbar {
+        display: none !important;
+      }
+
+      .note {
+        margin: 4px 18px 8px 18px !important;
+        font-size: 14px;
+      }
+
+      /*
+        Transform-based wallboard scaling.
+        The spacer creates scrollable area. The inner element gets scaled.
+        This is uglier than it should be, naturally, but signage wrappers
+        tend to treat normal responsive CSS like a personal insult.
+      */
+      .tv-scale-spacer {
+        width: calc(100vw * var(--tv-scale));
+        min-height: calc(100vh * var(--tv-scale));
+        overflow: visible;
+      }
+
+      .tv-scale {
+        transform: scale(var(--tv-scale));
+        transform-origin: top left;
+        width: 100vw;
+      }
+
+      .vmap-wrap,
+      .vmap-wrap.tv {
+        width: 100vw !important;
+        max-height: none !important;
+        margin: 0 !important;
+        padding: 8px !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        overflow: visible !important;
+        box-sizing: border-box;
+      }
+
+      svg.vmap {
+        width: 100vw !important;
+        height: auto !important;
+        min-width: 0 !important;
+        max-width: none !important;
+        display: block;
+      }
+
+      .edge:hover path {
+        stroke-width: 9 !important;
+        opacity: 1 !important;
+        filter: drop-shadow(0 0 10px #38bdf8);
+      }
+    </style>
+    """
+
+    html = """<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="300">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MiddKiPS Topology TV</title>
+  __EXTRA_CSS__
+</head>
+<body>
+  __BODY__
+</body>
+</html>"""
+
+    return HTMLResponse(
+        html
+        .replace("__EXTRA_CSS__", extra_css)
+        .replace("__BODY__", scaled_body)
+    )
+
+
+@app.get("/tools/topology-vmap", response_class=HTMLResponse)
+def tools_topology_vmap(
+    site: str = "vt",
+    show_ports: str = "1",
+    show_aps: str = "0",
+    show_core: str = "1",
+    show_services: str = "1",
+    show_distribution: str = "1",
+    show_access: str = "1",
+    flow: str = "0",
+    redundant_only: str = "0",
+    tv: str = "0",
+    layout: str = "topdown",
+    selected: str = "",
+    focus: str = "",
+    show_nonmist_access: str = "0"):
+    from app.services.middkips_topology_vmap_page import render_topology_vmap_page
+    body = render_topology_vmap_page(
+        site=site,
+        show_ports=show_ports,
+        show_aps=show_aps,
+        show_core=show_core,
+        show_services=show_services,
+        show_distribution=show_distribution,
+        show_access=show_access,
+        flow=flow,
+        redundant_only=redundant_only,
+        tv=tv,
+        layout=layout,
+        selected=selected,
+        focus=focus)
+    return globals()["layout"]("Topology V Map", body)
+
+
+@app.get("/tv/topology-wallboard", response_class=HTMLResponse)
+def tv_topology_wallboard():
+    from app.services.middkips_topology_vmap_page import render_topology_vmap_page
+
+    zoom_value = 1.35
+
+    body = render_topology_vmap_page(
+        site="vt",
+        show_ports="0",
+        show_aps="0",
+        show_core="1",
+        show_services="1",
+        show_distribution="1",
+        show_access="0",
+        flow="1",
+        redundant_only="1",
+        tv="1",
+    )
+
+    scaled_body = (
+        f'<div class="tv-scale-spacer" style="--tv-scale:{zoom_value};">'
+        f'<div class="tv-scale">{body}</div>'
+        f'</div>'
+    )
+
+    extra_css = """
+    <style>
+      html, body {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100vw;
+        min-height: 100vh;
+        overflow: auto !important;
+        background: #111827;
+        color: #e5e7eb;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      main, .container, .content {
+        margin: 0 !important;
+        padding: 0 !important;
+        max-width: none !important;
+        width: 100vw !important;
+      }
+
+      h1 {
+        font-size: 28px;
+        margin: 10px 18px 4px 18px;
+      }
+
+      .toolbar,
+      .preset-dropdown,
+      .layer-switches,
+      .vmap-drag-controls {
+        display: none !important;
+      }
+
+      .note {
+        margin: 4px 18px 8px 18px !important;
+        font-size: 14px;
+      }
+
+      .tv-scale-spacer {
+        width: calc(100vw * var(--tv-scale));
+        min-height: calc(100vh * var(--tv-scale));
+        overflow: visible;
+      }
+
+      .tv-scale {
+        transform: scale(var(--tv-scale));
+        transform-origin: top left;
+        width: 100vw;
+      }
+
+      .vmap-wrap,
+      .vmap-wrap.tv {
+        width: 100vw !important;
+        max-height: none !important;
+        margin: 0 !important;
+        padding: 8px !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        overflow: visible !important;
+        box-sizing: border-box;
+      }
+
+      svg.vmap {
+        width: 100vw !important;
+        height: auto !important;
+        min-width: 0 !important;
+        max-width: none !important;
+        display: block;
+      }
+    </style>
+    """
+
+    html = """<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="300">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MiddKiPS Topology Wallboard</title>
+  __EXTRA_CSS__
+</head>
+<body>
+  __BODY__
+</body>
+</html>"""
+
+    return HTMLResponse(
+        html
+        .replace("__EXTRA_CSS__", extra_css)
+        .replace("__BODY__", scaled_body)
+    )
+
+
+

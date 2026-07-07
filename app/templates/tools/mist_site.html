@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% from "components/table.html" import table %}
+
+{% block content %}
+<section class="lookup-page mist-page">
+  <header class="lookup-head">
+    <h1>Mist Site: {{ site_name }}</h1>
+    <div class="meta">{{ address }} · {{ timezone }} · cached {{ cache_ttl }} seconds</div>
+  </header>
+
+  <div class="lookup-status-row">
+    <a class="reset-link" href="{{ request.state.app_prefix }}/tools/mist">Back to Mist Overview</a>
+  </div>
+
+  <section class="mist-kpi-grid">
+    <div class="mist-kpi"><strong>{{ switch_count }}</strong><span>Switches</span></div>
+    <div class="mist-kpi"><strong>{{ ap_count }}</strong><span>APs / Devices</span></div>
+    <div class="mist-kpi"><strong>{{ client_count }}</strong><span>Current Clients</span></div>
+  </section>
+
+  <section class="lookup-section">
+    <h2>Switches <span>{{ switches|length }}</span></h2>
+    {% if switches %}
+      <div class="table-wrap">
+        <table class="netops-table mist-table" data-sortable-table>
+          <thead>
+            <tr>
+              <th>Switch</th>
+              <th>Role</th>
+              <th>Model</th>
+              <th>IP</th>
+              <th>Status</th>
+              <th>Up Ports</th>
+              <th>Ports</th>
+              <th>Clients</th>
+              <th>Version</th>
+              <th>MAC</th>
+              <th>Serial</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for sw in switches %}
+              <tr>
+                <td><a href="{{ request.state.app_prefix }}/tools/mist/switch?site_id={{ sw.site_id }}&mac={{ sw.mac_clean }}">{{ sw.name }}</a></td>
+                <td>{{ sw.role }}</td>
+                <td>{{ sw.model }}</td>
+                <td>{{ sw.ip }}</td>
+                <td>{{ sw.status }}</td>
+                <td>{{ sw.up_ports }}</td>
+                <td>{{ sw.ports }}</td>
+                <td>{{ sw.clients }}</td>
+                <td>{{ sw.version }}</td>
+                <td>{{ sw.mac }}</td>
+                <td>{{ sw.serial }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-card">No switches found for this site.</div>
+    {% endif %}
+  </section>
+
+  <section class="lookup-section">
+    <h2>APs / Devices <span>{{ aps|length }}</span></h2>
+    {{ table([
+      {"key": "name", "label": "Name"},
+      {"key": "type", "label": "Type"},
+      {"key": "model", "label": "Model"},
+      {"key": "ip", "label": "IP"},
+      {"key": "status", "label": "Status"},
+      {"key": "clients", "label": "Clients"},
+      {"key": "version", "label": "Version"},
+      {"key": "mac", "label": "MAC"},
+      {"key": "serial", "label": "Serial"}
+    ], aps) }}
+  </section>
+
+  <details class="lookup-section mist-detail-panel">
+    <summary>Current clients <span>{{ clients|length }}</span></summary>
+    {{ table([
+      {"key": "username", "label": "Username"},
+      {"key": "hostname", "label": "Hostname"},
+      {"key": "mac", "label": "MAC"},
+      {"key": "ip", "label": "IP"},
+      {"key": "ssid", "label": "SSID"},
+      {"key": "vlan", "label": "VLAN"},
+      {"key": "ap", "label": "AP"},
+      {"key": "switch", "label": "Switch"},
+      {"key": "port", "label": "Port"},
+      {"key": "rssi", "label": "RSSI"},
+      {"key": "snr", "label": "SNR"},
+      {"key": "last_seen", "label": "Last Seen"}
+    ], clients) }}
+  </details>
+</section>
+{% endblock %}

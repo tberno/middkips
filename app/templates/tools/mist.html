@@ -1,0 +1,299 @@
+{% extends "base.html" %}
+{% from "components/table.html" import table %}
+
+{% block content %}
+<section class="lookup-page mist-page">
+  <header class="lookup-head mist-overview-head">
+    <div>
+      <h1>Mist Lookup</h1>
+      <div class="meta">Standalone Mist integration. Stats are cached for {{ cache_ttl }} seconds.</div>
+    </div>
+  </header>
+
+  <form class="lookup-form mist-lookup-form" method="get">
+    <input name="q" value="{{ q or '' }}" placeholder="Search Mist: MAC, hostname, username, IP, AP, switch, site">
+    <label class="limit-control">
+      <span>Limit</span>
+      <select name="limit">
+        {% for opt in limit_options %}
+          <option value="{{ opt }}" {% if opt == limit %}selected{% endif %}>{{ opt }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit">Lookup</button>
+    <a class="reset-link" href="{{ request.state.app_prefix }}/tools/mist">Reset</a>
+  </form>
+
+  <section class="mist-summary-bar">
+    <span class="status-pill {% if configured %}good{% else %}bad{% endif %}">
+      Env {% if configured %}OK{% else %}missing{% endif %}
+    </span>
+    <span class="status-pill {% if self_ok %}good{% else %}bad{% endif %}">Self {% if self_ok %}OK{% else %}Fail{% endif %}</span>
+    <span class="status-pill {% if sites_ok %}good{% else %}bad{% endif %}">Sites {% if sites_ok %}OK{% else %}Fail{% endif %}</span>
+    <span class="status-pill {% if stats_ok %}good{% else %}bad{% endif %}">Stats {% if stats_ok %}OK{% else %}Partial{% endif %}</span>
+    <span class="status-pill {% if switches_ok %}good{% else %}neutral{% endif %}">Switches {{ total_switches }}</span>
+    {% if self_ok %}
+      <span class="status-pill neutral">{{ self_summary.name or "Mist Account" }}</span>
+    {% endif %}
+  </section>
+
+  {% if configured %}
+    <section class="mist-kpi-grid">
+      <div class="mist-kpi">
+        <strong>{{ site_count }}</strong>
+        <span>Sites</span>
+      </div>
+      <div class="mist-kpi">
+        <strong>{{ total_devices }}</strong>
+        <span>Mist Devices</span>
+      </div>
+      <div class="mist-kpi">
+        <strong>{{ online_devices }}</strong>
+        <span>Online Devices</span>
+      </div>
+      <div class="mist-kpi">
+        <strong>{{ total_switches }}</strong>
+        <span>Switches</span>
+      </div>
+      <div class="mist-kpi">
+        <strong>{{ total_clients }}</strong>
+        <span>Current Clients</span>
+      </div>
+    </section>
+
+    {% if q %}
+      <section class="lookup-section">
+        <h2>Mist Client Matches <span>{{ client_matches|length }}</span></h2>
+        {% if client_matches %}
+          {{ table([
+            {"key": "site", "label": "Site"},
+            {"key": "username", "label": "Username"},
+            {"key": "hostname", "label": "Hostname"},
+            {"key": "mac", "label": "MAC"},
+            {"key": "ip", "label": "IP"},
+            {"key": "ssid", "label": "SSID"},
+            {"key": "vlan", "label": "VLAN"},
+            {"key": "ap", "label": "AP"},
+            {"key": "switch", "label": "Switch"},
+            {"key": "port", "label": "Port"},
+            {"key": "rssi", "label": "RSSI"},
+            {"key": "snr", "label": "SNR"},
+            {"key": "status", "label": "Status"},
+            {"key": "last_seen", "label": "Last Seen"}
+          ], client_matches) }}
+        {% else %}
+          <div class="empty-card">No Mist client matches for <strong>{{ q }}</strong>.</div>
+        {% endif %}
+      </section>
+
+      <section class="lookup-section">
+        <h2>Mist Device / AP Matches <span>{{ device_matches|length }}</span></h2>
+        {% if device_matches %}
+          {{ table([
+            {"key": "site", "label": "Site"},
+            {"key": "type", "label": "Type"},
+            {"key": "name", "label": "Name"},
+            {"key": "model", "label": "Model"},
+            {"key": "mac", "label": "MAC"},
+            {"key": "serial", "label": "Serial"},
+            {"key": "ip", "label": "IP"},
+            {"key": "status", "label": "Status"},
+            {"key": "clients", "label": "Clients"},
+            {"key": "version", "label": "Version"}
+          ], device_matches) }}
+        {% else %}
+          <div class="empty-card">No Mist device/AP matches for <strong>{{ q }}</strong>.</div>
+        {% endif %}
+      </section>
+
+      <section class="lookup-section">
+        <h2>Mist Switch Matches <span>{{ switch_matches|length }}</span></h2>
+        {% if switch_matches %}
+          {{ table([
+            {"key": "site", "label": "Site"},
+            {"key": "name", "label": "Switch"},
+            {"key": "role", "label": "Role"},
+            {"key": "model", "label": "Model"},
+            {"key": "ip", "label": "IP"},
+            {"key": "status", "label": "Status"},
+            {"key": "up_ports", "label": "Up Ports"},
+            {"key": "ports", "label": "Ports"},
+            {"key": "clients", "label": "Clients"},
+            {"key": "version", "label": "Version"},
+            {"key": "mac", "label": "MAC"},
+            {"key": "serial", "label": "Serial"}
+          ], switch_matches) }}
+        {% else %}
+          <div class="empty-card">No Mist switch matches for <strong>{{ q }}</strong>.</div>
+        {% endif %}
+      </section>
+    {% else %}
+      <section class="lookup-section mist-pod-section">
+        <h2>POD / Area Cards <span>{{ pod_cards|length }}</span></h2>
+
+        {% if pod_cards %}
+          <div class="mist-pod-grid">
+            {% for pod in pod_cards %}
+              <article class="mist-pod-card {% if pod.offline|int > 0 %}has-offline{% endif %}">
+                <header class="mist-pod-card-head">
+                  <div>
+                    <h3>{{ pod.pod }}</h3>
+                    <div class="mist-pod-subtitle">{{ pod.site_names }}</div>
+                  </div>
+                  {% if pod.site_id %}
+                    <a class="mini-link" href="{{ request.state.app_prefix }}/tools/mist/site?site_id={{ pod.site_id }}">Open</a>
+                  {% endif %}
+                </header>
+
+                <div class="mist-pod-metrics">
+                  <div>
+                    <strong>{{ pod.devices }}</strong>
+                    <span>Devices</span>
+                  </div>
+                  <div>
+                    <strong>{{ pod.switches }}</strong>
+                    <span>Switches</span>
+                  </div>
+                  <div>
+                    <strong>{{ pod.clients }}</strong>
+                    <span>Clients</span>
+                  </div>
+                  <div>
+                    <strong>{{ pod.offline }}</strong>
+                    <span>Offline</span>
+                  </div>
+                </div>
+
+                {% if pod.role_summary %}
+                  <div class="mist-role-summary">{{ pod.role_summary }}</div>
+                {% endif %}
+
+                <div class="mist-switch-preview">
+                  {% if pod.preview_switches %}
+                    {% for sw in pod.preview_switches %}
+                      <a class="mist-switch-pill" href="{{ request.state.app_prefix }}/tools/mist/switch?site_id={{ sw.site_id }}&mac={{ sw.mac_clean }}">
+                        <span>{{ sw.name }}</span>
+                        <em>{{ sw.role or sw.model }}</em>
+                      </a>
+                    {% endfor %}
+                  {% else %}
+                    <div class="mist-muted">No switches in this area.</div>
+                  {% endif %}
+                </div>
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="empty-card">No POD cards returned.</div>
+        {% endif %}
+      </section>
+
+      <details class="lookup-section mist-detail-panel">
+        <summary>All switches table <span>{{ switch_rows|length }}</span></summary>
+        {% if switch_rows %}
+          <div class="table-wrap">
+            <table class="netops-table mist-table" data-sortable-table>
+              <thead>
+                <tr>
+                  <th>Site</th>
+                  <th>Switch</th>
+                  <th>Role</th>
+                  <th>Model</th>
+                  <th>IP</th>
+                  <th>Status</th>
+                  <th>Up Ports</th>
+                  <th>Ports</th>
+                  <th>Clients</th>
+                  <th>Version</th>
+                  <th>MAC</th>
+                  <th>Serial</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for sw in switch_rows %}
+                  <tr>
+                    <td><a href="{{ request.state.app_prefix }}/tools/mist/site?site_id={{ sw.site_id }}">{{ sw.site }}</a></td>
+                    <td><a href="{{ request.state.app_prefix }}/tools/mist/switch?site_id={{ sw.site_id }}&mac={{ sw.mac_clean }}">{{ sw.name }}</a></td>
+                    <td>{{ sw.role }}</td>
+                    <td>{{ sw.model }}</td>
+                    <td>{{ sw.ip }}</td>
+                    <td>{{ sw.status }}</td>
+                    <td>{{ sw.up_ports }}</td>
+                    <td>{{ sw.ports }}</td>
+                    <td>{{ sw.clients }}</td>
+                    <td>{{ sw.version }}</td>
+                    <td>{{ sw.mac }}</td>
+                    <td>{{ sw.serial }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="empty-card">No Mist switch rows returned.</div>
+        {% endif %}
+      </details>
+
+      <details class="lookup-section mist-detail-panel">
+        <summary>All sites table <span>{{ site_count }}</span></summary>
+        {% if sites %}
+          <div class="table-wrap">
+            <table class="netops-table mist-table" data-sortable-table>
+              <thead>
+                <tr>
+                  <th>Site</th>
+                  <th>POD / Area</th>
+                  <th>Devices</th>
+                  <th>Online</th>
+                  <th>Offline</th>
+                  <th>Switches</th>
+                  <th>Clients</th>
+                  <th>Address</th>
+                  <th>Site ID</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for site in sites %}
+                  <tr>
+                    <td><a href="{{ request.state.app_prefix }}/tools/mist/site?site_id={{ site.site_id }}">{{ site.site }}</a></td>
+                    <td>{{ site.pod }}</td>
+                    <td>{{ site.devices }}</td>
+                    <td>{{ site.online_devices }}</td>
+                    <td>{{ site.offline_devices }}</td>
+                    <td>{{ site.switches }}</td>
+                    <td>{{ site.clients }}</td>
+                    <td>{{ site.address }}</td>
+                    <td>{{ site.short_id }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="empty-card">No sites returned.</div>
+        {% endif %}
+      </details>
+    {% endif %}
+
+    {% if errors %}
+      <section class="lookup-section lookup-error-section">
+        <h2>Mist API Warnings / Errors <span>{{ errors|length }}</span></h2>
+        {{ table([
+          {"key": "section", "label": "Section"},
+          {"key": "error", "label": "Error"}
+        ], errors) }}
+      </section>
+    {% endif %}
+  {% else %}
+    <section class="lookup-section">
+      <h2>Required Environment Variables <span>3</span></h2>
+      <pre class="code-block">MIST_BASE_URL=https://api.ac2.mist.com
+MIST_ORG_ID=your-org-id
+MIST_API_TOKEN=your-token</pre>
+      <div class="empty-card">
+        Put these in /opt/docker-stacks/netops-v4/.env only. Do not commit them to Git.
+      </div>
+    </section>
+  {% endif %}
+</section>
+{% endblock %}

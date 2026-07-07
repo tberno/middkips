@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% from "components/table.html" import table %}
+
+{% block content %}
+<section class="lookup-page universal-page">
+  <header class="lookup-head">
+    <h1>Universal Lookup</h1>
+    <div class="meta">One search across LibreNMS, Mist, SolidServer, DNS/IPAM/DHCP, MACs, interfaces, VLANs, and events.</div>
+  </header>
+
+  <form class="lookup-form universal-form" method="get">
+    <input name="q" value="{{ q or '' }}" placeholder="Search device, switch, IP, MAC, VLAN, interface, DNS record, username, AP">
+    <label class="limit-control">
+      <span>Limit</span>
+      <select name="limit">
+        {% for opt in limit_options %}
+          <option value="{{ opt }}" {% if opt == limit %}selected{% endif %}>{{ opt }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit">Universal Lookup</button>
+    <a class="reset-link" href="{{ request.state.app_prefix }}/tools/universal">Reset</a>
+  </form>
+
+  {% if not q %}
+    <div class="empty-card">
+      Search anything: switch name, interface, IP, MAC, VLAN, DNS name, DHCP record, AP, username, or event text.
+    </div>
+  {% else %}
+    <section class="universal-summary">
+      <span class="status-pill neutral">Query: {{ q }}</span>
+      <span class="status-pill good">Correlated: {{ entity_rows|length }}</span>
+      <span class="status-pill neutral">Result Sections: {{ sections|length }}</span>
+      <span class="status-pill {% if errors %}bad{% else %}good{% endif %}">Errors: {{ errors|length }}</span>
+    </section>
+
+    <section class="lookup-section">
+      <h2>Correlated Summary <span>{{ entity_rows|length }}</span></h2>
+      {% if entity_rows %}
+        {{ table([
+          {"key": "kind", "label": "Kind"},
+          {"key": "name", "label": "Name"},
+          {"key": "sources", "label": "Sources"},
+          {"key": "status", "label": "Status"},
+          {"key": "ip", "label": "IP"},
+          {"key": "mac", "label": "MAC"},
+          {"key": "site", "label": "Site"},
+          {"key": "role", "label": "Role"},
+          {"key": "model", "label": "Model"},
+          {"key": "version", "label": "Version / OS"},
+          {"key": "serial", "label": "Serial"}
+        ], entity_rows) }}
+      {% else %}
+        <div class="empty-card">No correlated summary rows for <strong>{{ q }}</strong>.</div>
+      {% endif %}
+    </section>
+
+    <section class="lookup-section universal-toc">
+      <h2>Result Sections <span>{{ sections|length }}</span></h2>
+      <div class="result-section-jump">
+        {% for sec in sections %}
+          <a href="#sec-{{ loop.index }}">{{ sec.title }} <span>{{ sec.count }}</span></a>
+        {% endfor %}
+        {% if errors %}
+          <a href="#source-errors">Errors <span>{{ errors|length }}</span></a>
+        {% endif %}
+      </div>
+    </section>
+
+    {% if sections %}
+      {% for sec in sections %}
+        <section class="lookup-section universal-preview-section" id="sec-{{ loop.index }}">
+          <header class="universal-section-head">
+            <div>
+              <h2>{{ sec.title }} <span>{{ sec.count }}</span></h2>
+              {% if sec.link %}
+                <div class="section-link">
+                  <a href="{{ request.state.app_prefix }}{{ sec.link }}">Open source lookup</a>
+                  {% if sec.count > sec.shown %}
+                    <span class="section-note">loaded {{ sec.shown }} of {{ sec.count }}</span>
+                  {% endif %}
+                </div>
+              {% endif %}
+            </div>
+            <div class="section-preview-note">
+              showing first {{ sec.preview_shown }}
+            </div>
+          </header>
+
+          {% if sec.preview_rows %}
+            {{ table(sec.preview_columns, sec.preview_rows) }}
+          {% else %}
+            <div class="empty-card">No rows.</div>
+          {% endif %}
+
+          {% if sec.count > sec.preview_shown %}
+            <details class="universal-full-details">
+              <summary>Show full loaded table <span>{{ sec.shown }} rows</span></summary>
+              {{ table(sec.columns, sec.rows) }}
+            </details>
+          {% endif %}
+        </section>
+      {% endfor %}
+    {% else %}
+      <div class="empty-card">No results found for <strong>{{ q }}</strong>.</div>
+    {% endif %}
+
+    {% if errors %}
+      <section class="lookup-section lookup-error-section" id="source-errors">
+        <h2>Source Errors / Warnings <span>{{ errors|length }}</span></h2>
+        {{ table([
+          {"key": "source", "label": "Source"},
+          {"key": "error", "label": "Error"}
+        ], errors) }}
+      </section>
+    {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

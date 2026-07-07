@@ -1,0 +1,36 @@
+{% macro table(columns, rows) %}
+<div class="table-wrap">
+  <table class="data-table" data-sortable-table>
+    <thead>
+      <tr>
+        {% for col in columns %}
+          <th data-sort-col="{{ loop.index0 }}" tabindex="0" title="Click to sort">
+            <span>{{ col.label }}</span>
+            <span class="sort-indicator">sort</span>
+          </th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% if rows %}
+        {% for row in rows %}
+          <tr>
+            {% for col in columns %}
+              {% set value = row.get(col.key, '') %}
+              {% if col.html %}
+                <td>{{ value|safe }}</td>
+              {% else %}
+                <td>{{ value }}</td>
+              {% endif %}
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      {% else %}
+        <tr>
+          <td colspan="{{ columns|length }}" class="muted">No results found.</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+{% endmacro %}

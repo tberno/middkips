@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% from "components/table.html" import table %}
+
+{% block content %}
+<section class="lookup-page">
+  <header class="lookup-head">
+    <h1>{{ title }}</h1>
+    <div class="meta">{{ subtitle }}</div>
+  </header>
+
+  <form class="lookup-form" method="get">
+    <input name="q" value="{{ q or '' }}" placeholder="IP, hostname, MAC, DNS record, zone, scope">
+    <label class="limit-control">
+      <span>Limit</span>
+      <select name="limit">
+        {% for opt in limit_options %}
+          <option value="{{ opt }}" {% if opt == limit %}selected{% endif %}>{{ opt }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="check-label">
+      <input type="checkbox" name="debug" value="1" {% if show_debug %}checked{% endif %}>
+      Debug
+    </label>
+    <button type="submit">Lookup</button>
+    <a class="reset-link" href="{{ reset_url }}">Reset</a>
+  </form>
+
+  <div class="lookup-status-row">
+    <span class="status-pill {% if configured %}good{% else %}bad{% endif %}">
+      SOLIDserver env {% if configured %}configured{% else %}missing{% endif %}
+    </span>
+    <span class="status-pill {% if base_url_set %}good{% else %}bad{% endif %}">URL</span>
+    <span class="status-pill {% if user_set %}good{% else %}bad{% endif %}">User</span>
+    <span class="status-pill {% if password_set %}good{% else %}bad{% endif %}">Password</span>
+  </div>
+
+  {% if not q %}
+    <div class="empty-card">
+      Enter a search value to query SOLIDserver IPAM, DHCP, and DNS independently from Universal Lookup.
+    </div>
+  {% else %}
+    <div class="lookup-tabs">
+      {% for section in sections %}
+        <a href="#{{ section.key }}">
+          {{ section.title.replace('SolidServer ', '').replace('Resource Records', 'RRs') }}
+          <span>{{ section.rows|length }}</span>
+        </a>
+      {% endfor %}
+    </div>
+
+    {% for section in sections %}
+      <section id="{{ section.key }}" class="lookup-section {% if section.is_error %}lookup-error-section{% endif %}">
+        <h2>
+          {{ section.title }}
+          <span>{{ section.rows|length }}</span>
+        </h2>
+
+        {% if section.rows %}
+          {{ table(section.columns, section.rows) }}
+        {% else %}
+          <div class="empty-card">No matches.</div>
+        {% endif %}
+      </section>
+    {% endfor %}
+
+    {% if show_debug %}
+      <section class="lookup-section lookup-debug">
+        <h2>Debug Endpoint Errors <span>{{ debug_errors|length }}</span></h2>
+        {% if debug_errors %}
+          <pre>{% for err in debug_errors %}{{ err }}
+{% endfor %}</pre>
+        {% else %}
+          <div class="empty-card">No debug errors.</div>
+        {% endif %}
+      </section>
+    {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

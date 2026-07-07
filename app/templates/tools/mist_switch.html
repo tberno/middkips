@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% from "components/table.html" import table %}
+
+{% block content %}
+<section class="lookup-page mist-page">
+  <header class="lookup-head">
+    <h1>Mist Switch: {{ switch.name }}</h1>
+    <div class="meta">{{ site_name }} · {{ switch.model }} · {{ switch.ip }} · cached {{ cache_ttl }} seconds</div>
+  </header>
+
+  <div class="lookup-status-row">
+    <a class="reset-link" href="{{ request.state.app_prefix }}/tools/mist/site?site_id={{ site_id }}">Back to {{ site_name }}</a>
+    <a class="reset-link" href="{{ request.state.app_prefix }}/tools/mist">Back to Mist Overview</a>
+  </div>
+
+  <section class="mist-kpi-grid">
+    <div class="mist-kpi"><strong>{{ switch.status }}</strong><span>Status</span></div>
+    <div class="mist-kpi"><strong>{{ up_port_count }}</strong><span>Up Ports</span></div>
+    <div class="mist-kpi"><strong>{{ port_count }}</strong><span>Total Interfaces</span></div>
+    <div class="mist-kpi"><strong>{{ switch.clients or 0 }}</strong><span>Clients</span></div>
+    <div class="mist-kpi"><strong>{{ switch.role or "-" }}</strong><span>Role</span></div>
+  </section>
+
+  <section class="lookup-section">
+    <h2>Switch Details <span>{{ switch.name }}</span></h2>
+    {{ table([
+      {"key": "item", "label": "Item"},
+      {"key": "value", "label": "Value"}
+    ], [
+      {"item": "Site", "value": site_name},
+      {"item": "Name", "value": switch.name},
+      {"item": "Role", "value": switch.role},
+      {"item": "Model", "value": switch.model},
+      {"item": "IP", "value": switch.ip},
+      {"item": "MAC", "value": switch.mac},
+      {"item": "Serial", "value": switch.serial},
+      {"item": "Version", "value": switch.version},
+      {"item": "Last Seen", "value": switch.last_seen}
+    ]) }}
+  </section>
+
+  <section class="lookup-section">
+    <h2>Health / Stats <span>{{ health|length }}</span></h2>
+    {% if health %}
+      {{ table([
+        {"key": "item", "label": "Item"},
+        {"key": "value", "label": "Value"}
+      ], health) }}
+    {% else %}
+      <div class="empty-card">No health details returned.</div>
+    {% endif %}
+  </section>
+
+  <section class="lookup-section">
+    <h2>Interfaces / Ports <span>{{ ports|length }}</span></h2>
+    {% if ports %}
+      {{ table([
+        {"key": "port", "label": "Port"},
+        {"key": "unit", "label": "Unit"},
+        {"key": "status", "label": "Status"},
+        {"key": "usage", "label": "Mist Usage"},
+        {"key": "ae", "label": "AE"},
+        {"key": "critical", "label": "Critical"},
+        {"key": "rx_pkts", "label": "RX Packets"},
+        {"key": "tx_pkts", "label": "TX Packets"},
+        {"key": "ips", "label": "IPs"}
+      ], ports) }}
+    {% else %}
+      <div class="empty-card">No interface stats returned.</div>
+    {% endif %}
+  </section>
+</section>
+{% endblock %}
