@@ -117,3 +117,84 @@ pre {
   border-radius: 8px;
   overflow: auto;
 }
+
+/* MiddKiPS shared UI additions */
+
+.section-title {
+  margin-top: 24px;
+  margin-bottom: 8px;
+}
+
+.actions,
+.toolbar,
+.tool-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  background: var(--panel-2);
+  color: var(--muted);
+}
+
+.badge.good {
+  border-color: rgba(57, 255, 20, .35);
+  color: var(--good);
+}
+
+.badge.warn {
+  border-color: rgba(255, 159, 28, .45);
+  color: var(--warn);
+}
+
+.badge.bad {
+  border-color: rgba(255, 49, 49, .45);
+  color: var(--bad);
+}
+
+.legacy-note {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(255, 159, 28, .07);
+  color: var(--muted);
+}
+
+.topology-card {
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  padding: 14px;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.topology-card:hover {
+  background: var(--panel-2);
+}
+
+.topology-card h3 {
+  margin-top: 0;
+  margin-bottom: 6px;
+}
+
+.topology-card p {
+  margin-bottom: 0;
+  color: var(--muted);
+}
+
+.topology-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}

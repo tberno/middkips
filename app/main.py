@@ -819,7 +819,7 @@ def layout(title: str, body: str) -> str:
         <a href="/tools/topology-v2-split?q=core&limit=250&show_aps=0">Topology v2 Split</a>
         <a href="/tools/topology-v2?q=core&limit=250&show_aps=0">Standard v2</a>
         <a href="/tools/topology">Logical Topology</a>
-        <a href="/tools/mist/topology">Mist Logical Topology</a>
+        <a href="/tools/mist/topology">Legacy Mist Logical Topology</a>
 
         <div class="nav-section">Wallboard</div>
         <a href="/tv/topology?zoom=1.35">TV Topology</a>
@@ -1193,7 +1193,7 @@ def middkips_topology_hub_body():
         {
             "title": "Standard v2",
             "badge": "Legacy",
-            "desc": "Original v2 topology page.",
+            "desc": "Legacy v2 topology page. Kept for comparison only.",
             "url": "/tools/topology-v2?q=core&limit=250&show_aps=0",
         },
         {
@@ -1352,6 +1352,7 @@ def middkips_topology_hub_body():
 </div>
 
 <h2 class="section-title">Topology Maps</h2>
+<p class="muted">Use the production V-Map views first. Legacy topology experiments are kept for validation only.</p>
 <div class="topology-grid">
 """ + "".join(card_html) + """
 </div>
@@ -4022,7 +4023,7 @@ def tools_mist_topology(q: str = "", limit: int = 250):
     <!doctype html>
     <html>
     <head>
-      <title>Mist Topology Rebuild</title>
+      <title>Legacy Mist Topology Disabled</title>
       <style>
         body {
           font-family: system-ui, -apple-system, Segoe UI, sans-serif;
@@ -4048,7 +4049,7 @@ def tools_mist_topology(q: str = "", limit: int = 250):
     </head>
     <body>
       <div class="panel">
-        <h1>Mist Topology is being rebuilt</h1>
+        <h1>Legacy Mist Topology Disabled</h1>
         <p>
           The old all-in-one topology view has been disabled because it mixed sites,
           devices, switches, APs, and clients into one graph.
