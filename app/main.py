@@ -1141,223 +1141,111 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 def middkips_topology_hub_body():
-    cards = [
+    production_cards = [
         {
             "title": "Mist POD View",
-            "badge": "Recommended",
-            "desc": "Mist-focused functional map grouped by POD, with Services and Non-Mist infrastructure available.",
+            "desc": "Primary production topology view. Mist pod layout with core, services, distribution, and access layers.",
             "url": "/tools/topology-vmap?site=vt&layout=mist_pods&show_core=1&show_services=1&show_distribution=1&show_access=1&show_nonmist_access=0&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0",
         },
         {
             "title": "Mist POD + Non-Mist Inventory",
-            "badge": "Expanded",
-            "desc": "Same Mist POD view, but also shows legacy/non-Mist access, site, AV, and specialty switches.",
+            "desc": "Production pod view with non-Mist inventory included for comparison and migration cleanup.",
             "url": "/tools/topology-vmap?site=vt&layout=mist_pods&show_core=1&show_services=1&show_distribution=1&show_access=1&show_nonmist_access=1&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0",
         },
         {
-            "title": "Mist POD + Ports",
-            "badge": "Troubleshooting",
-            "desc": "Mist POD view with port labels enabled. Useful for tracing paths, ugly enough to be honest.",
-            "url": "/tools/topology-vmap?site=vt&layout=mist_pods&show_core=1&show_services=1&show_distribution=1&show_access=1&show_nonmist_access=0&show_aps=0&show_ports=1&flow=1&redundant_only=1&tv=0",
-        },
-        {
-            "title": "Transition View",
-            "badge": "Legacy bridge",
-            "desc": "Left-to-right view showing Mist, Services, and Non-Mist infrastructure.",
-            "url": "/tools/topology-vmap?site=vt&layout=transition&show_core=1&show_services=1&show_distribution=1&show_access=0&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0",
-        },
-        {
-            "title": "Core / Services / Distribution",
-            "badge": "Wallboard",
-            "desc": "Clean top-level infrastructure view with access hidden by default.",
-            "url": "/tools/topology-vmap?site=vt&show_core=1&show_services=1&show_distribution=1&show_access=0&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0",
-        },
-        {
             "title": "Full V-Map",
-            "badge": "Everything-ish",
-            "desc": "Core, services, distribution, and access. Useful, but it will absolutely become a box farm.",
+            "desc": "Full campus V-map with core, services, distribution, and access layers.",
             "url": "/tools/topology-vmap?site=vt&show_core=1&show_services=1&show_distribution=1&show_access=1&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0",
         },
         {
             "title": "Full V-Map + Ports",
-            "badge": "Dense",
-            "desc": "Full V-map with link port labels enabled.",
+            "desc": "Full V-map with ports enabled. Useful for validation, noisier for normal viewing.",
             "url": "/tools/topology-vmap?site=vt&show_core=1&show_services=1&show_distribution=1&show_access=1&show_aps=0&show_ports=1&flow=1&redundant_only=1&tv=0",
         },
+    ]
+
+    tv_cards = [
+        {
+            "title": "TV Topology",
+            "desc": "Wallboard-friendly topology route for large display use.",
+            "url": "/tv/topology?zoom=1.35",
+        },
+        {
+            "title": "Topology Wallboard",
+            "desc": "Alternate topology wallboard view.",
+            "url": "/tv/topology-wallboard",
+        },
+    ]
+
+    legacy_cards = [
         {
             "title": "Topology v2 Split",
-            "badge": "Legacy",
-            "desc": "Older services-centered split view. Still useful for comparison and existing workflow muscle memory.",
+            "desc": "Legacy split topology page. Kept for validation and comparison only.",
             "url": "/tools/topology-v2-split?q=core&limit=250&show_aps=0",
         },
         {
             "title": "Standard v2",
-            "badge": "Legacy",
             "desc": "Legacy v2 topology page. Kept for comparison only.",
             "url": "/tools/topology-v2?q=core&limit=250&show_aps=0",
         },
         {
-            "title": "TV Topology",
-            "badge": "Signage",
-            "desc": "Dedicated wallboard-friendly topology route.",
-            "url": "/tv/topology?zoom=1.35",
-        },
-        {
-            "title": "Client Search",
-            "badge": "Lookup",
-            "desc": "Find a client/device and jump into related information.",
-            "url": "/tools/client-search",
-        },
-        {
-            "title": "Universal Lookup",
-            "badge": "Search",
-            "desc": "IP, MAC, hostname, or fragment lookup.",
-            "url": "/tools/lookup",
+            "title": "Legacy Mist Logical Topology",
+            "desc": "Disabled legacy Mist-derived topology placeholder. Kept so old links do not break.",
+            "url": "/tools/mist/topology?q=core&limit=80",
         },
     ]
 
-    card_html = []
-    for c in cards:
-        card_html.append(
-            '<a class="topology-card" href="{url}">'
-            '<div class="card-top"><h3>{title}</h3><span>{badge}</span></div>'
-            '<p>{desc}</p>'
-            '</a>'.format(
-                url=c["url"],
-                title=c["title"],
-                badge=c["badge"],
-                desc=c["desc"],
-            )
+    def card_html(card):
+        return (
+            f'<a class="topology-card" href="{card["url"]}">'
+            f'<h3>{card["title"]}</h3>'
+            f'<p>{card["desc"]}</p>'
+            f'</a>'
         )
 
-    return """
-<style>
-  .home-hero {
-    border:1px solid #334155;
-    border-radius:16px;
-    padding:18px;
-    background:linear-gradient(135deg,#0f172a,#111827);
-    margin-bottom:16px;
-  }
+    def section(title, desc, cards, legacy=False):
+        note_class = "legacy-note" if legacy else "muted"
+        return (
+            f'<h2 class="section-title">{title}</h2>'
+            f'<p class="{note_class}">{desc}</p>'
+            '<div class="topology-grid">'
+            + "".join(card_html(card) for card in cards)
+            + '</div>'
+        )
 
-  .home-hero h1 {
-    margin:0 0 8px 0;
-    color:#f8fafc;
-  }
+    return f"""
+<h1>MiddKiPS</h1>
+<p class="muted">
+  Network visibility and operational tools for topology, lookup, LibreNMS/Oxidized workflows,
+  Mist, ClearPass, and SolidServer.
+</p>
 
-  .home-hero p {
-    color:#cbd5e1;
-    max-width:980px;
-    line-height:1.45;
-  }
-
-  .quick-actions {
-    display:flex;
-    gap:10px;
-    flex-wrap:wrap;
-    margin-top:14px;
-  }
-
-  .quick-actions a {
-    display:inline-flex;
-    align-items:center;
-    border:1px solid #334155;
-    border-radius:999px;
-    padding:8px 12px;
-    background:#020617;
-    color:#e5e7eb;
-    text-decoration:none;
-    font-weight:900;
-  }
-
-  .quick-actions a:hover {
-    border-color:#38bdf8;
-    background:#0f172a;
-  }
-
-  .topology-grid {
-    display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
-    gap:12px;
-  }
-
-  .topology-card {
-    display:block;
-    border:1px solid #334155;
-    border-radius:14px;
-    padding:14px;
-    background:#0f172a;
-    color:#e5e7eb;
-    text-decoration:none;
-    min-height:118px;
-  }
-
-  .topology-card:hover {
-    border-color:#38bdf8;
-    background:#111c33;
-  }
-
-  .card-top {
-    display:flex;
-    align-items:flex-start;
-    justify-content:space-between;
-    gap:10px;
-    margin-bottom:8px;
-  }
-
-  .card-top h3 {
-    margin:0;
-    color:#f8fafc;
-    font-size:17px;
-  }
-
-  .card-top span {
-    flex:0 0 auto;
-    border:1px solid #475569;
-    border-radius:999px;
-    padding:3px 8px;
-    color:#93c5fd;
-    font-size:11px;
-    font-weight:900;
-    background:#020617;
-  }
-
-  .topology-card p {
-    margin:0;
-    color:#cbd5e1;
-    font-size:13px;
-    line-height:1.35;
-  }
-
-  .section-title {
-    margin:18px 0 10px 0;
-    color:#f8fafc;
-  }
-</style>
-
-<div class="home-hero">
-  <h1>MiddKiPS</h1>
-  <p>
-    Network visibility and operational tools for topology, lookup, LibreNMS/Oxidized workflows,
-    and campus infrastructure mapping. The recommended starting point is the Mist POD View,
-    because apparently even topology pages need a sensible front door.
-  </p>
-  <div class="quick-actions">
-    <a href="/tools/topologies">Topology Maps</a>
-    <a href="/tools/topology-vmap?site=vt&layout=mist_pods&show_core=1&show_services=1&show_distribution=1&show_access=1&show_nonmist_access=0&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0">Mist POD View</a>
-    <a href="/tools/lookup">Universal Lookup</a>
-    <a href="/tools/client-search">Client Search</a>
-    <a href="/tv/topology?zoom=1.35">TV Topology</a>
-  </div>
+<div class="actions" style="margin-bottom:16px">
+  <a class="button" href="/lookup">Universal Lookup</a>
+  <a class="button" href="/tools/mist">Mist Lookup</a>
+  <a class="button" href="/tools/clearpass">ClearPass</a>
+  <a class="button" href="/tools/solidserver">SolidServer</a>
 </div>
 
-<h2 class="section-title">Topology Maps</h2>
-<p class="muted">Use the production V-Map views first. Legacy topology experiments are kept for validation only.</p>
-<div class="topology-grid">
-""" + "".join(card_html) + """
-</div>
+{section(
+    "Production Views",
+    "Use these first. These are the cleanest topology views for normal operations.",
+    production_cards,
+)}
+
+{section(
+    "TV / Wallboard Views",
+    "Large-screen views for NOC, kiosk, and wallboard display.",
+    tv_cards,
+)}
+
+{section(
+    "Legacy / Validation Views",
+    "These routes still work, but they are kept for comparison, validation, or old bookmarks. Do not treat them as the primary operational view.",
+    legacy_cards,
+    legacy=True,
+)}
 """
-
 
 def middkips_home_body():
     return middkips_topology_hub_body()
