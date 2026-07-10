@@ -5,3 +5,16 @@ app/__pycache__/
 app/main.py.bak.*
 app/static/
 *.tar.gz
+
+# Local scratch / emergency backups. Do not commit this nonsense.
+_archive/
+safe-backups/
+data/
+:TEMP*
+*.before-*
+*.bak
+*.bak.*
+*.orig
+*.save
+*~
+netops-app/

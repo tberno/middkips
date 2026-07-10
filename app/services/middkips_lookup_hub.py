@@ -26,6 +26,7 @@ def render_lookup_hub_page(q=""):
         ("LibreNMS Events", "/reports/events", "Manual event lookup."),
         ("SolidServer DDI", "/tools/solidserver", "Manual DNS / DHCP / IPAM lookup."),
         ("Mist Lookup", "/tools/mist", "Manual Mist AP / switch / client / site lookup."),
+        ("ClearPass Lookup", "/tools/clearpass", "Read-only ClearPass endpoint, guest, and local-user lookup."),
     ]
 
     cards = ""

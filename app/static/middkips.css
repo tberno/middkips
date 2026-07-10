@@ -1,0 +1,119 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --panel-2: #1f2430;
+  --text: #e8e8e8;
+  --muted: #9ca3af;
+  --border: #333a46;
+  --link: #67b7ff;
+  --good: #39ff14;
+  --warn: #ff9f1c;
+  --bad: #ff3131;
+}
+
+body {
+  font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+a {
+  color: var(--link);
+}
+
+.page {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.panel,
+.card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  padding: 16px;
+}
+
+.card-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.good {
+  color: var(--good);
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.bad {
+  color: var(--bad);
+}
+
+.button,
+button,
+input[type="submit"] {
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  padding: 7px 11px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.button:hover,
+button:hover,
+input[type="submit"]:hover {
+  filter: brightness(1.15);
+}
+
+input,
+select,
+textarea {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0d1117;
+  color: var(--text);
+  padding: 7px 9px;
+}
+
+.table-wrap {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--border);
+  padding: 7px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: var(--panel-2);
+}
+
+pre {
+  white-space: pre-wrap;
+  background: #0d1117;
+  border: 1px solid var(--border);
+  padding: 10px;
+  border-radius: 8px;
+  overflow: auto;
+}

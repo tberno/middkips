@@ -16,7 +16,8 @@ from urllib.parse import quote_plus
 
 import pymysql
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 
 APP_NAME = os.getenv("PORTAL_NAME", "MiddKiPS")
@@ -200,6 +201,7 @@ def layout(title: str, body: str) -> str:
     return f"""<!doctype html>
 <html data-theme="dark">
 <head>
+  <link rel="stylesheet" href="/static/middkips.css">
   <meta charset="utf-8">
   <title>{h(title)} - {h(APP_NAME)}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -831,6 +833,7 @@ def layout(title: str, body: str) -> str:
         <div class="nav-section">Lookup</div>
         <a href="/lookup">Universal Lookup</a>
         <a href="/tools/lookup">Lookup Hub</a>
+        <a href="/tools/clearpass">ClearPass Lookup</a>
         <a href="/tools/lldp-lookup">LLDP Lookup</a>
         <a href="/tools/unmatched-lldp-switches">Unmatched LLDP Switches</a>
         <a href="/tools/mist">Mist Lookup</a>
@@ -1134,6 +1137,7 @@ def hidden_device_ids(selected_ids: list[int]) -> str:
     return f'<input type="hidden" name="device_ids" value="{h(ids_csv(selected_ids))}">'
 
 app = FastAPI(title=APP_NAME)
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 def middkips_topology_hub_body():
@@ -1362,6 +1366,11 @@ def middkips_home_body():
 def middkips_home():
     return globals()["layout"]("MiddKiPS", middkips_home_body())
 
+
+
+@app.get("/tools/topology")
+def compat_tools_topology():
+    return RedirectResponse(url="/tools/topologies", status_code=302)
 
 @app.get("/tools/topologies", response_class=HTMLResponse)
 def topology_maps_menu():
@@ -2892,6 +2901,45 @@ def events(q: str = "", device_ids: str = "", limit: int = 250):
 def lookup(q: str = "", limit: int = 50):
     from app.services.middkips_universal_page import render_universal_lookup_page
     body = render_universal_lookup_page(q=q, limit=limit)
+
+    if q:
+        try:
+            from app.services.middkips_clearpass_page import render_clearpass_universal_correlation_card
+            clearpass_card = render_clearpass_universal_correlation_card(q=q, limit=limit)
+            if clearpass_card and "Primary Correlations" in body:
+                section_start = body.find("Primary Correlations")
+                section_end = body.find("</section>", section_start)
+                if section_end != -1:
+                    body = body[:section_end] + clearpass_card + body[section_end:]
+                else:
+                    body += clearpass_card
+            elif clearpass_card:
+                body += clearpass_card
+        except Exception as exc:
+            import html
+            body += f"""
+            <section class="panel lookup-section">
+              <h2>ClearPass Correlation <span class="muted">(error)</span></h2>
+              <p class="bad">ClearPass correlation card failed: {html.escape(str(exc))}</p>
+            </section>
+            """
+
+
+
+
+    if q:
+        try:
+            from app.services.middkips_clearpass_page import render_clearpass_session_universal_section
+            body += render_clearpass_session_universal_section(q=q, limit=limit)
+        except Exception as exc:
+            import html
+            body += f"""
+            <section class="panel lookup-section">
+              <h2>ClearPass Session Matches <span class="muted">(error)</span></h2>
+              <p class="bad">ClearPass session lookup failed inside Universal Lookup: {html.escape(str(exc))}</p>
+            </section>
+            """
+
     return layout("Universal Lookup", body)
 
 
@@ -3871,6 +3919,13 @@ def _solidserver_dashboard_html() -> str:
 
 
 
+@app.get("/tools/clearpass", response_class=HTMLResponse)
+def tools_clearpass(q: str = "", limit: int = 50):
+    from app.services.middkips_clearpass_page import render_clearpass_lookup_page
+    body = render_clearpass_lookup_page(q=q, limit=limit)
+    return layout("ClearPass Lookup", body)
+
+
 @app.get("/tools/lookup", response_class=HTMLResponse)
 def tools_lookup(q: str = ""):
     from app.services.middkips_lookup_hub import render_lookup_hub_page
@@ -3963,9 +4018,57 @@ def tools_topology(q: str = "", limit: int = 50):
 
 @app.get("/tools/mist/topology", response_class=HTMLResponse)
 def tools_mist_topology(q: str = "", limit: int = 250):
-    from app.services.middkips_mist_topology import render_mist_topology_page
-    body = render_mist_topology_page(q=q, limit=limit)
-    return layout("Mist Logical Topology", body)
+    return HTMLResponse("""
+    <!doctype html>
+    <html>
+    <head>
+      <title>Mist Topology Rebuild</title>
+      <style>
+        body {
+          font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+          margin: 2rem;
+          background: #0f1115;
+          color: #e8e8e8;
+        }
+        .panel {
+          max-width: 900px;
+          border: 1px solid #333;
+          border-radius: 12px;
+          padding: 1.5rem;
+          background: #171a21;
+        }
+        a { color: #67b7ff; }
+        code {
+          background: #242936;
+          padding: .15rem .35rem;
+          border-radius: 4px;
+        }
+        ul { line-height: 1.7; }
+      </style>
+    </head>
+    <body>
+      <div class="panel">
+        <h1>Mist Topology is being rebuilt</h1>
+        <p>
+          The old all-in-one topology view has been disabled because it mixed sites,
+          devices, switches, APs, and clients into one graph.
+        </p>
+        <p>Use these views for now:</p>
+        <ul>
+          <li><a href="/tools/mist">Mist Lookup</a></li>
+          <li>Site views from the Mist lookup page</li>
+          <li>Switch detail pages from site views</li>
+        </ul>
+        <p>
+          Replacement plan:
+          <code>site summary</code>,
+          <code>single-site topology</code>,
+          <code>switch/AP/client local view</code>.
+        </p>
+      </div>
+    </body>
+    </html>
+    """)
 
 @app.get("/tools/mist", response_class=HTMLResponse)
 def tools_mist(q: str = "", limit: int = 50):
