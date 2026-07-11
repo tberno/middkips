@@ -18,6 +18,7 @@ import pymysql
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from fastapi import Request
 
 
 APP_NAME = os.getenv("PORTAL_NAME", "MiddKiPS")
@@ -4048,10 +4049,10 @@ def tools_maps_archive():
 @app.get("/tools/maps/mist-pods", response_class=HTMLResponse)
 def tools_maps_mist_pods(q: str = "", redundant_only: str = "0"):
     from app.services.middkips_map_model import build_map
-    from app.services.middkips_map_renderer import render_map_page
+    from app.services.middkips_map_renderer import render_mist_pod_page
 
     data = build_map(map_type="mist-pods", q=q, limit=300)
-    body = render_map_page(
+    body = render_mist_pod_page(
         data,
         q=q,
         redundant_only=str(redundant_only or "0") == "1",
@@ -4214,3 +4215,118 @@ def tools_maps_device_drilldown(device_id: int):
 </div>
 """
     return layout(f"Map Drilldown - {hostname}", body)
+
+
+@app.get("/api/fabric-links/summary")
+def api_fabric_links_summary():
+    from app.services.middkips_fabric_links_page import fabric_link_summary
+    return fabric_link_summary()
+
+
+@app.get("/api/fabric-links/problems")
+def api_fabric_links_problems():
+    from app.services.middkips_fabric_links_page import fabric_link_problems
+    return {"problems": fabric_link_problems()}
+
+
+@app.get("/tools/fabric-links", response_class=HTMLResponse)
+def tools_fabric_links():
+    from app.services.middkips_fabric_links_page import render_fabric_link_monitor
+    return layout("Fabric Link Monitor", render_fabric_link_monitor())
+
+
+@app.get("/api/fabric-links/summary")
+def api_fabric_links_summary():
+    from app.services.middkips_fabric_links_page import fabric_link_summary
+    return fabric_link_summary()
+
+
+@app.get("/api/fabric-links/problems")
+def api_fabric_links_problems():
+    from app.services.middkips_fabric_links_page import fabric_link_problems
+    return {"problems": fabric_link_problems()}
+
+
+@app.get("/tools/fabric-links", response_class=HTMLResponse)
+def tools_fabric_links():
+    from app.services.middkips_fabric_links_page import render_fabric_link_monitor
+    return layout("Fabric Link Monitor", render_fabric_link_monitor())
+
+
+@app.get("/tools/fabric-links/flow", response_class=HTMLResponse)
+def tools_fabric_links_flow():
+    from app.services.middkips_fabric_links_page import render_fabric_link_flow
+    return layout("Fabric Flow Monitor", render_fabric_link_flow())
+
+
+@app.get("/tools/network-flow", response_class=HTMLResponse)
+def tools_network_flow_home():
+    from app.services.middkips_network_flow_page import render_network_flow_home
+    return layout("Network Flow Modules", render_network_flow_home())
+
+
+@app.get("/tools/network-flow/mist", response_class=HTMLResponse)
+def tools_network_flow_mist(edit: str = "0", leafs: str = "0"):
+    from app.services.middkips_network_flow_page import render_mist_flow
+    return layout(
+        "Mist Fabric Flow",
+        render_mist_flow(
+            editable=str(edit) == "1",
+            show_leafs=str(leafs) == "1",
+        ),
+    )
+
+
+@app.get("/tools/network-flow/edge", response_class=HTMLResponse)
+def tools_network_flow_edge(edit: str = "0"):
+    from app.services.middkips_edge_flow_page import render_edge_flow
+
+    return layout(
+        "Dynamic Edge Flow",
+        render_edge_flow(editable=str(edit) == "1"),
+    )
+
+@app.get("/tools/network-flow/datacenter", response_class=HTMLResponse)
+def tools_network_flow_datacenter(edit: str = "0"):
+    from app.services.middkips_network_flow_page import render_module_flow
+    return layout("Old Datacenter Flow", render_module_flow("datacenter", editable=str(edit) == "1"))
+
+
+@app.get("/tools/network-flow/hci", response_class=HTMLResponse)
+def tools_network_flow_hci(edit: str = "0"):
+    from app.services.middkips_network_flow_page import render_module_flow
+    return layout("HCI / DC Cluster Flow", render_module_flow("hci", editable=str(edit) == "1"))
+
+
+@app.get("/tv/network-flow", response_class=HTMLResponse)
+def tv_network_flow():
+    from app.services.middkips_network_flow_page import render_tv_network_flow
+    return render_tv_network_flow()
+
+
+
+@app.post("/api/network-flow/{module}/positions")
+async def api_network_flow_save_positions(module: str, request: Request):
+    from app.services.middkips_network_flow_page import save_positions
+    body = await request.json()
+    positions = body.get("positions", [])
+    return save_positions(module, positions)
+
+
+@app.post("/api/network-flow/{module}/positions/reset")
+def api_network_flow_reset_positions(module: str):
+    from app.services.middkips_network_flow_page import reset_positions
+    return reset_positions(module)
+
+
+
+@app.get("/api/network-flow/edge")
+def api_network_flow_edge():
+    from app.services.middkips_edge_flow_page import edge_flow_data
+    return edge_flow_data()
+
+
+@app.get("/api/network-flow/edge/problems")
+def api_network_flow_edge_problems():
+    from app.services.middkips_edge_flow_page import edge_flow_problems
+    return edge_flow_problems()
