@@ -3799,9 +3799,8 @@ def lookup_csv(q: str = "", limit: int = 50):
 
 @app.get("/tools/topology", response_class=HTMLResponse)
 def tools_topology(q: str = "", limit: int = 50):
-    from app.services.middkips_mist_topology import render_mist_topology_page
-    body = render_mist_topology_page(q=q, limit=limit)
-    return layout("Logical Topology", body)
+    from app.services.middkips_maps_page import render_archived_map_page
+    return layout("Archived Logical Topology", render_archived_map_page("Legacy Logical Topology"))
 
 @app.get("/tools/mist/topology", response_class=HTMLResponse)
 def tools_mist_topology(q: str = "", limit: int = 250):
@@ -4049,7 +4048,7 @@ def tools_topology_vmap(
     focus: str = "",
     show_nonmist_access: str = "0"):
     from app.services.middkips_maps_page import render_archived_map_page
-    return globals()["layout"]("Archived V-Map", render_archived_map_page("Legacy V-Map"))
+    return layout("Archived V-Map", render_archived_map_page("Legacy V-Map"))
 
 @app.get("/tv/topology-wallboard", response_class=HTMLResponse)
 def tv_topology_wallboard():
