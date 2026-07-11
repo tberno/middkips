@@ -804,26 +804,18 @@ def layout(title: str, body: str) -> str:
     <div class="nav-item">
       <div class="nav-button">Topologies</div>
       <div class="nav-menu">
-        <div class="nav-section">Recommended</div>
-        <a href="/tools/topologies">Topology Maps Home</a>
-        <a href="/tools/topology-vmap?site=vt&layout=mist_pods&show_core=1&show_services=1&show_distribution=1&show_access=1&show_nonmist_access=0&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0">Mist POD View</a>
-        <a href="/tools/topology-vmap?site=vt&layout=mist_pods&show_core=1&show_services=1&show_distribution=1&show_access=1&show_nonmist_access=1&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0">Mist POD + Non-Mist Inventory</a>
-        <a href="/tools/topology-vmap?site=vt&layout=mist_pods&show_core=1&show_services=1&show_distribution=1&show_access=1&show_nonmist_access=0&show_aps=0&show_ports=1&flow=1&redundant_only=1&tv=0">Mist POD + Ports</a>
-
-        <div class="nav-section">Core / Full</div>
-        <a href="/tools/topology-vmap?site=vt&show_core=1&show_services=1&show_distribution=1&show_access=0&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0">Core / Services / Distribution</a>
-        <a href="/tools/topology-vmap?site=vt&show_core=1&show_services=1&show_distribution=1&show_access=1&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0">Full V-Map</a>
-        <a href="/tools/topology-vmap?site=vt&show_core=1&show_services=1&show_distribution=1&show_access=1&show_aps=0&show_ports=1&flow=1&redundant_only=1&tv=0">Full V-Map + Ports</a>
-
-        <div class="nav-section">Legacy / Other</div>
-        <a href="/tools/topology-v2-split?q=core&limit=250&show_aps=0">Topology v2 Split</a>
-        <a href="/tools/topology-v2?q=core&limit=250&show_aps=0">Standard v2</a>
-        <a href="/tools/topology">Logical Topology</a>
-        <a href="/tools/mist/topology">Legacy Mist Logical Topology</a>
+        <div class="nav-section">Maps</div>
+        <a href="/tools/maps">Maps Home</a>
+        <a href="/tools/maps/mist-pods">Mist Pod Map</a>
+        <a href="/tools/maps/service-block">Service Block Map</a>
+        <a href="/tools/maps/legacy-datacenter">Legacy Datacenter Map</a>
+        <a href="/tools/maps/edge">Edge Map</a>
 
         <div class="nav-section">Wallboard</div>
-        <a href="/tv/topology?zoom=1.35">TV Topology</a>
-        <a href="/tv/topology-wallboard">Topology Wallboard</a>
+        <a href="/tv/maps">TV Map Dashboard</a>
+
+        <div class="nav-section">Archive</div>
+        <a href="/tools/maps/archive">Archived Map Routes</a>
       </div>
     </div>
 
@@ -4032,21 +4024,7 @@ def tv_topology(zoom: str = "1.35",
     return layout("Archived TV Topology", render_archived_map_page("Legacy TV Topology"))
 
 @app.get("/tools/topology-vmap", response_class=HTMLResponse)
-def tools_topology_vmap(
-    site: str = "vt",
-    show_ports: str = "1",
-    show_aps: str = "0",
-    show_core: str = "1",
-    show_services: str = "1",
-    show_distribution: str = "1",
-    show_access: str = "1",
-    flow: str = "0",
-    redundant_only: str = "0",
-    tv: str = "0",
-    layout: str = "topdown",
-    selected: str = "",
-    focus: str = "",
-    show_nonmist_access: str = "0"):
+def tools_topology_vmap():
     from app.services.middkips_maps_page import render_archived_map_page
     return layout("Archived V-Map", render_archived_map_page("Legacy V-Map"))
 
