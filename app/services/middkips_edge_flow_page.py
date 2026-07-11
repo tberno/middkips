@@ -180,6 +180,107 @@ EDGE_PROVIDER_LINKS: list[dict[str, str]] = [
 ]
 
 
+EDGE_POSITION_MODULE = "edge-layout-v2"
+
+EDGE_CANVAS = {
+    "width": 2560,
+    "height": 1440,
+    "divider_x": 1280,
+}
+
+# The edge layout is intentionally symmetric. These are logical canvas
+# coordinates, not browser pixels. Fit/zoom scales the entire stage.
+EDGE_SCREEN_LAYOUT = {
+    # Providers.
+    "provider-firstlight": {
+        "x": 150,
+        "y": 50,
+        "w": 340,
+        "h": 108,
+    },
+    "provider-uvm-i2": {
+        "x": 1380,
+        "y": 50,
+        "w": 340,
+        "h": 108,
+    },
+    "provider-lumen": {
+        "x": 2010,
+        "y": 50,
+        "w": 340,
+        "h": 108,
+    },
+
+    # Edge routers.
+    "zuma-dfl": {
+        "x": 160,
+        "y": 280,
+        "w": 380,
+        "h": 84,
+    },
+    "turbo-vtr": {
+        "x": 1740,
+        "y": 280,
+        "w": 380,
+        "h": 84,
+    },
+
+    # Handoff switches.
+    "daisy-dfl": {
+        "x": 160,
+        "y": 500,
+        "w": 380,
+        "h": 84,
+    },
+    "chester-vtr": {
+        "x": 1740,
+        "y": 500,
+        "w": 380,
+        "h": 84,
+    },
+
+    # Firewalls, evenly spread inside each half.
+    "vpn-fw-dfl": {
+        "x": 80,
+        "y": 780,
+        "w": 340,
+        "h": 88,
+    },
+    "edgefw-dfl": {
+        "x": 720,
+        "y": 780,
+        "w": 340,
+        "h": 88,
+    },
+    "edgefw-voter": {
+        "x": 1500,
+        "y": 780,
+        "w": 340,
+        "h": 88,
+    },
+    "vpn-fw-vtr": {
+        "x": 2100,
+        "y": 780,
+        "w": 340,
+        "h": 88,
+    },
+
+    # Core handoff.
+    "dfl-core": {
+        "x": 430,
+        "y": 1120,
+        "w": 420,
+        "h": 92,
+    },
+    "vtr-core": {
+        "x": 1710,
+        "y": 1120,
+        "w": 420,
+        "h": 92,
+    },
+}
+
+
 def h(value: Any) -> str:
     return escape(str(value or ""))
 
@@ -328,8 +429,8 @@ def load_edge_positions() -> dict[str, dict[str, int]]:
     rows = fetch_all("""
     SELECT node_id, x, y, w
     FROM middkips_network_flow_positions
-    WHERE module = 'edge'
-    """)
+    WHERE module = %s
+    """, [EDGE_POSITION_MODULE])
 
     out: dict[str, dict[str, int]] = {}
 
@@ -511,6 +612,26 @@ def edge_flow_data() -> dict[str, Any]:
 
         nodes.append(node)
 
+    # Apply the current semantic edge layout. Keeping this separate from
+    # inventory discovery means a new device status does not rearrange the TV.
+    for node in nodes:
+        default_position = EDGE_SCREEN_LAYOUT.get(node["id"])
+
+        if default_position:
+            node["x"] = int(default_position["x"])
+            node["y"] = int(default_position["y"])
+            node["w"] = int(default_position["w"])
+            node["h"] = int(default_position["h"])
+
+        saved_position = positions.get(node["id"])
+
+        if saved_position:
+            node["x"] = int(saved_position["x"])
+            node["y"] = int(saved_position["y"])
+
+            if saved_position.get("w"):
+                node["w"] = int(saved_position["w"])
+
     counts = {
         "up": 0,
         "down": 0,
@@ -540,11 +661,7 @@ def edge_flow_data() -> dict[str, Any]:
 
     return {
         "module": "edge",
-        "canvas": {
-            "width": 2400,
-            "height": 1320,
-            "divider_x": 1200,
-        },
+        "canvas": dict(EDGE_CANVAS),
         "nodes": nodes,
         "links": links,
         "summary": summary,
@@ -573,9 +690,13 @@ def render_edge_flow(editable: bool = False) -> str:
     """
 
     return f"""
-<link rel="stylesheet" href="/static/middkips_edge_flow.css?v=20260711-2">
+<link rel="stylesheet" href="/static/middkips_edge_flow.css?v=20260711-4">
 
-<div class="ef-page" data-editable="{str(editable).lower()}">
+<div
+  class="ef-page"
+  data-editable="{str(editable).lower()}"
+  data-position-module="{h(EDGE_POSITION_MODULE)}"
+>
   <header class="ef-header">
     <div>
       <h1>Dynamic Edge Flow</h1>
@@ -628,5 +749,5 @@ def render_edge_flow(editable: bool = False) -> str:
 </div>
 
 <script id="ef-data" type="application/json">{payload}</script>
-<script src="/static/middkips_edge_flow.js?v=20260711-2"></script>
+<script src="/static/middkips_edge_flow.js?v=20260711-4"></script>
 """

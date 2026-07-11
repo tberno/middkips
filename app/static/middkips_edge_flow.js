@@ -26,6 +26,8 @@
 
   let data = JSON.parse(dataElement.textContent || "{}");
   const editable = page.dataset.editable === "true";
+  const positionModule =
+    page.dataset.positionModule || "edge-layout-v2";
   let zoom = 1;
   let selectedNode = "";
   let hotElements = [];
@@ -373,6 +375,7 @@
   };
 
   const showNodeDetails = (node) => {
+    details.classList.add("ef-details-open");
     const deviceLink = node.device_id
       ? `<a class="button" href="/dashboard?device_id=${encodeURIComponent(node.device_id)}">Open Device</a>`
       : "";
@@ -397,6 +400,7 @@
   };
 
   const showLinkDetails = (link) => {
+    details.classList.add("ef-details-open");
     const source = nodeById(link.source);
     const target = nodeById(link.target);
 
@@ -444,7 +448,7 @@
     const widthScale = (viewport.clientWidth - 24) / data.canvas.width;
     const heightScale = (viewport.clientHeight - 24) / data.canvas.height;
 
-    setZoom(Math.min(1.65, widthScale, heightScale));
+    setZoom(Math.min(2, widthScale, heightScale));
   };
 
   const attachDragHandlers = (element, node) => {
@@ -505,7 +509,7 @@
     }));
 
     const response = await fetch(
-      "/api/network-flow/edge/positions",
+      `${"/api/network-flow/"}${encodeURIComponent(positionModule)}/positions`,
       {
         method: "POST",
         headers: {
@@ -526,7 +530,7 @@
     }
 
     await fetch(
-      "/api/network-flow/edge/positions/reset",
+      `${"/api/network-flow/"}${encodeURIComponent(positionModule)}/positions/reset`,
       {
         method: "POST",
       }
@@ -598,9 +602,12 @@
 
   viewport.addEventListener("click", () => {
     selectedNode = "";
+
     document.querySelectorAll(".ef-node").forEach((element) => {
       element.classList.remove("ef-node-selected");
     });
+
+    details.classList.remove("ef-details-open");
   });
 
   if (editable) {
@@ -614,6 +621,17 @@
     window.clearTimeout(edgeFitResizeTimer);
 
     edgeFitResizeTimer = window.setTimeout(() => {
+      fit();
+    }, 150);
+  });
+
+
+  let edgeResponsiveFitTimer = null;
+
+  window.addEventListener("resize", () => {
+    window.clearTimeout(edgeResponsiveFitTimer);
+
+    edgeResponsiveFitTimer = window.setTimeout(() => {
       fit();
     }, 150);
   });
