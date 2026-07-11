@@ -256,3 +256,54 @@ nav,
 .dropdown-menu {
   overflow-wrap: anywhere;
 }
+
+/* New MiddKiPS maps workspace */
+
+.map-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.map-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
+.map-color-chip {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: inline-block;
+  box-shadow: 0 0 12px currentColor;
+}
+
+.map-dashboard-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  align-items: stretch;
+}
+
+.map-dashboard-tile {
+  min-height: 180px;
+}
+
+.map-dashboard-tile h2 {
+  margin-top: 0;
+}
+
+@media (max-width: 900px) {
+  .map-dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}

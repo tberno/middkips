@@ -1141,111 +1141,9 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 def middkips_topology_hub_body():
-    production_cards = [
-        {
-            "title": "Mist POD View",
-            "desc": "Primary production topology view. Mist pod layout with core, services, distribution, and access layers.",
-            "url": "/tools/topology-vmap?site=vt&layout=mist_pods&show_core=1&show_services=1&show_distribution=1&show_access=1&show_nonmist_access=0&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0",
-        },
-        {
-            "title": "Mist POD + Non-Mist Inventory",
-            "desc": "Production pod view with non-Mist inventory included for comparison and migration cleanup.",
-            "url": "/tools/topology-vmap?site=vt&layout=mist_pods&show_core=1&show_services=1&show_distribution=1&show_access=1&show_nonmist_access=1&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0",
-        },
-        {
-            "title": "Full V-Map",
-            "desc": "Full campus V-map with core, services, distribution, and access layers.",
-            "url": "/tools/topology-vmap?site=vt&show_core=1&show_services=1&show_distribution=1&show_access=1&show_aps=0&show_ports=0&flow=1&redundant_only=1&tv=0",
-        },
-        {
-            "title": "Full V-Map + Ports",
-            "desc": "Full V-map with ports enabled. Useful for validation, noisier for normal viewing.",
-            "url": "/tools/topology-vmap?site=vt&show_core=1&show_services=1&show_distribution=1&show_access=1&show_aps=0&show_ports=1&flow=1&redundant_only=1&tv=0",
-        },
-    ]
+    from app.services.middkips_maps_page import render_maps_home
+    return render_maps_home()
 
-    tv_cards = [
-        {
-            "title": "TV Topology",
-            "desc": "Wallboard-friendly topology route for large display use.",
-            "url": "/tv/topology?zoom=1.35",
-        },
-        {
-            "title": "Topology Wallboard",
-            "desc": "Alternate topology wallboard view.",
-            "url": "/tv/topology-wallboard",
-        },
-    ]
-
-    legacy_cards = [
-        {
-            "title": "Topology v2 Split",
-            "desc": "Legacy split topology page. Kept for validation and comparison only.",
-            "url": "/tools/topology-v2-split?q=core&limit=250&show_aps=0",
-        },
-        {
-            "title": "Standard v2",
-            "desc": "Legacy v2 topology page. Kept for comparison only.",
-            "url": "/tools/topology-v2?q=core&limit=250&show_aps=0",
-        },
-        {
-            "title": "Legacy Mist Logical Topology",
-            "desc": "Disabled legacy Mist-derived topology placeholder. Kept so old links do not break.",
-            "url": "/tools/mist/topology?q=core&limit=80",
-        },
-    ]
-
-    def card_html(card):
-        return (
-            f'<a class="topology-card" href="{card["url"]}">'
-            f'<h3>{card["title"]}</h3>'
-            f'<p>{card["desc"]}</p>'
-            f'</a>'
-        )
-
-    def section(title, desc, cards, legacy=False):
-        note_class = "legacy-note" if legacy else "muted"
-        return (
-            f'<h2 class="section-title">{title}</h2>'
-            f'<p class="{note_class}">{desc}</p>'
-            '<div class="topology-grid">'
-            + "".join(card_html(card) for card in cards)
-            + '</div>'
-        )
-
-    return f"""
-<h1>MiddKiPS</h1>
-<p class="muted">
-  Network visibility and operational tools for topology, lookup, LibreNMS/Oxidized workflows,
-  Mist, ClearPass, and SolidServer.
-</p>
-
-<div class="actions" style="margin-bottom:16px">
-  <a class="button" href="/lookup">Universal Lookup</a>
-  <a class="button" href="/tools/mist">Mist Lookup</a>
-  <a class="button" href="/tools/clearpass">ClearPass</a>
-  <a class="button" href="/tools/solidserver">SolidServer</a>
-</div>
-
-{section(
-    "Production Views",
-    "Use these first. These are the cleanest topology views for normal operations.",
-    production_cards,
-)}
-
-{section(
-    "TV / Wallboard Views",
-    "Large-screen views for NOC, kiosk, and wallboard display.",
-    tv_cards,
-)}
-
-{section(
-    "Legacy / Validation Views",
-    "These routes still work, but they are kept for comparison, validation, or old bookmarks. Do not treat them as the primary operational view.",
-    legacy_cards,
-    legacy=True,
-)}
-"""
 
 def middkips_home_body():
     return middkips_topology_hub_body()
@@ -1259,7 +1157,7 @@ def middkips_home():
 
 @app.get("/tools/topology")
 def compat_tools_topology():
-    return RedirectResponse(url="/tools/topologies", status_code=302)
+    return RedirectResponse(url="/tools/maps", status_code=302)
 
 @app.get("/tools/topologies", response_class=HTMLResponse)
 def topology_maps_menu():
@@ -3907,57 +3805,8 @@ def tools_topology(q: str = "", limit: int = 50):
 
 @app.get("/tools/mist/topology", response_class=HTMLResponse)
 def tools_mist_topology(q: str = "", limit: int = 250):
-    return HTMLResponse("""
-    <!doctype html>
-    <html>
-    <head>
-      <title>Legacy Mist Topology Disabled</title>
-      <style>
-        body {
-          font-family: system-ui, -apple-system, Segoe UI, sans-serif;
-          margin: 2rem;
-          background: #0f1115;
-          color: #e8e8e8;
-        }
-        .panel {
-          max-width: 900px;
-          border: 1px solid #333;
-          border-radius: 12px;
-          padding: 1.5rem;
-          background: #171a21;
-        }
-        a { color: #67b7ff; }
-        code {
-          background: #242936;
-          padding: .15rem .35rem;
-          border-radius: 4px;
-        }
-        ul { line-height: 1.7; }
-      </style>
-    </head>
-    <body>
-      <div class="panel">
-        <h1>Legacy Mist Topology Disabled</h1>
-        <p>
-          The old all-in-one topology view has been disabled because it mixed sites,
-          devices, switches, APs, and clients into one graph.
-        </p>
-        <p>Use these views for now:</p>
-        <ul>
-          <li><a href="/tools/mist">Mist Lookup</a></li>
-          <li>Site views from the Mist lookup page</li>
-          <li>Switch detail pages from site views</li>
-        </ul>
-        <p>
-          Replacement plan:
-          <code>site summary</code>,
-          <code>single-site topology</code>,
-          <code>switch/AP/client local view</code>.
-        </p>
-      </div>
-    </body>
-    </html>
-    """)
+    from app.services.middkips_maps_page import render_archived_map_page
+    return layout("Archived Mist Topology", render_archived_map_page("Legacy Mist Logical Topology"))
 
 @app.get("/tools/mist", response_class=HTMLResponse)
 def tools_mist(q: str = "", limit: int = 50):
@@ -4162,10 +4011,8 @@ def tools_solidserver(q: str = ""):
 
 @app.get("/tools/topology-v2", response_class=HTMLResponse)
 def tools_topology_v2(q: str = "", limit: int = 50, show_aps: str = "0"):
-    from app.services.middkips_topology_v2_page import render_topology_v2_page
-    body = render_topology_v2_page(q=q, limit=limit, show_aps=show_aps)
-    return layout("Logical Topology v2", body)
-
+    from app.services.middkips_maps_page import render_archived_map_page
+    return layout("Archived Topology v2", render_archived_map_page("Legacy Topology v2"))
 
 @app.get("/tools/mist/clients-v2", response_class=HTMLResponse)
 def tools_mist_clients_v2(q: str = "", limit: int = 50):
@@ -4176,145 +4023,14 @@ def tools_mist_clients_v2(q: str = "", limit: int = 50):
 
 @app.get("/tools/topology-v2-split", response_class=HTMLResponse)
 def tools_topology_v2_split(q: str = "", limit: int = 50, show_aps: str = "0", focus: str = ""):
-    from app.services.middkips_topology_v2_split_page import render_topology_v2_split_page
-    body = render_topology_v2_split_page(q=q, limit=limit, show_aps=show_aps, focus=focus)
-    return layout("Topology v2 Split", body)
-
-
-
+    from app.services.middkips_maps_page import render_archived_map_page
+    return layout("Archived Topology v2 Split", render_archived_map_page("Legacy Topology v2 Split"))
 
 @app.get("/tv/topology", response_class=HTMLResponse)
 def tv_topology(zoom: str = "1.35",
     show_nonmist_access: str = "0"):
-    from app.services.middkips_topology_vmap_page import render_topology_vmap_page
-
-    try:
-        zoom_value = float(zoom)
-    except Exception:
-        zoom_value = 1.35
-
-    # Keep humans from entering 400x and accidentally summoning a graph kaiju.
-    zoom_value = max(0.75, min(2.75, zoom_value))
-
-    body = render_topology_vmap_page(
-        site="vt",
-        show_ports="0",
-        show_aps="0",
-        show_core="1",
-        show_services="1",
-        show_distribution="1",
-        show_access="0",
-        flow="1",
-        redundant_only="1",
-        tv="1",
-        show_nonmist_access=show_nonmist_access)
-
-    scaled_body = (
-        f'<div class="tv-scale-spacer" style="--tv-scale:{zoom_value};">'
-        f'<div class="tv-scale">{body}</div>'
-        f'</div>'
-    )
-
-    extra_css = """
-    <style>
-      html, body {
-        margin: 0 !important;
-        padding: 0 !important;
-        width: 100vw;
-        min-height: 100vh;
-        overflow: auto !important;
-        background: #111827;
-        color: #e5e7eb;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-
-      main, .container, .content {
-        margin: 0 !important;
-        padding: 0 !important;
-        max-width: none !important;
-        width: 100vw !important;
-      }
-
-      h1 {
-        font-size: 28px;
-        margin: 10px 18px 4px 18px;
-      }
-
-      .toolbar {
-        display: none !important;
-      }
-
-      .note {
-        margin: 4px 18px 8px 18px !important;
-        font-size: 14px;
-      }
-
-      /*
-        Transform-based wallboard scaling.
-        The spacer creates scrollable area. The inner element gets scaled.
-        This is uglier than it should be, naturally, but signage wrappers
-        tend to treat normal responsive CSS like a personal insult.
-      */
-      .tv-scale-spacer {
-        width: calc(100vw * var(--tv-scale));
-        min-height: calc(100vh * var(--tv-scale));
-        overflow: visible;
-      }
-
-      .tv-scale {
-        transform: scale(var(--tv-scale));
-        transform-origin: top left;
-        width: 100vw;
-      }
-
-      .vmap-wrap,
-      .vmap-wrap.tv {
-        width: 100vw !important;
-        max-height: none !important;
-        margin: 0 !important;
-        padding: 8px !important;
-        border: 0 !important;
-        border-radius: 0 !important;
-        overflow: visible !important;
-        box-sizing: border-box;
-      }
-
-      svg.vmap {
-        width: 100vw !important;
-        height: auto !important;
-        min-width: 0 !important;
-        max-width: none !important;
-        display: block;
-      }
-
-      .edge:hover path {
-        stroke-width: 9 !important;
-        opacity: 1 !important;
-        filter: drop-shadow(0 0 10px #38bdf8);
-      }
-    </style>
-    """
-
-    html = """<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta http-equiv="refresh" content="300">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MiddKiPS Topology TV</title>
-  __EXTRA_CSS__
-</head>
-<body>
-  __BODY__
-</body>
-</html>"""
-
-    return HTMLResponse(
-        html
-        .replace("__EXTRA_CSS__", extra_css)
-        .replace("__BODY__", scaled_body)
-    )
-
+    from app.services.middkips_maps_page import render_archived_map_page
+    return layout("Archived TV Topology", render_archived_map_page("Legacy TV Topology"))
 
 @app.get("/tools/topology-vmap", response_class=HTMLResponse)
 def tools_topology_vmap(
@@ -4332,139 +4048,52 @@ def tools_topology_vmap(
     selected: str = "",
     focus: str = "",
     show_nonmist_access: str = "0"):
-    from app.services.middkips_topology_vmap_page import render_topology_vmap_page
-    body = render_topology_vmap_page(
-        site=site,
-        show_ports=show_ports,
-        show_aps=show_aps,
-        show_core=show_core,
-        show_services=show_services,
-        show_distribution=show_distribution,
-        show_access=show_access,
-        flow=flow,
-        redundant_only=redundant_only,
-        tv=tv,
-        layout=layout,
-        selected=selected,
-        focus=focus)
-    return globals()["layout"]("Topology V Map", body)
-
+    from app.services.middkips_maps_page import render_archived_map_page
+    return globals()["layout"]("Archived V-Map", render_archived_map_page("Legacy V-Map"))
 
 @app.get("/tv/topology-wallboard", response_class=HTMLResponse)
 def tv_topology_wallboard():
-    from app.services.middkips_topology_vmap_page import render_topology_vmap_page
+    from app.services.middkips_maps_page import render_archived_map_page
+    return layout("Archived Topology Wallboard", render_archived_map_page("Legacy Topology Wallboard"))
 
-    zoom_value = 1.35
-
-    body = render_topology_vmap_page(
-        site="vt",
-        show_ports="0",
-        show_aps="0",
-        show_core="1",
-        show_services="1",
-        show_distribution="1",
-        show_access="0",
-        flow="1",
-        redundant_only="1",
-        tv="1",
-    )
-
-    scaled_body = (
-        f'<div class="tv-scale-spacer" style="--tv-scale:{zoom_value};">'
-        f'<div class="tv-scale">{body}</div>'
-        f'</div>'
-    )
-
-    extra_css = """
-    <style>
-      html, body {
-        margin: 0 !important;
-        padding: 0 !important;
-        width: 100vw;
-        min-height: 100vh;
-        overflow: auto !important;
-        background: #111827;
-        color: #e5e7eb;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-
-      main, .container, .content {
-        margin: 0 !important;
-        padding: 0 !important;
-        max-width: none !important;
-        width: 100vw !important;
-      }
-
-      h1 {
-        font-size: 28px;
-        margin: 10px 18px 4px 18px;
-      }
-
-      .toolbar,
-      .preset-dropdown,
-      .layer-switches,
-      .vmap-drag-controls {
-        display: none !important;
-      }
-
-      .note {
-        margin: 4px 18px 8px 18px !important;
-        font-size: 14px;
-      }
-
-      .tv-scale-spacer {
-        width: calc(100vw * var(--tv-scale));
-        min-height: calc(100vh * var(--tv-scale));
-        overflow: visible;
-      }
-
-      .tv-scale {
-        transform: scale(var(--tv-scale));
-        transform-origin: top left;
-        width: 100vw;
-      }
-
-      .vmap-wrap,
-      .vmap-wrap.tv {
-        width: 100vw !important;
-        max-height: none !important;
-        margin: 0 !important;
-        padding: 8px !important;
-        border: 0 !important;
-        border-radius: 0 !important;
-        overflow: visible !important;
-        box-sizing: border-box;
-      }
-
-      svg.vmap {
-        width: 100vw !important;
-        height: auto !important;
-        min-width: 0 !important;
-        max-width: none !important;
-        display: block;
-      }
-    </style>
-    """
-
-    html = """<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta http-equiv="refresh" content="300">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MiddKiPS Topology Wallboard</title>
-  __EXTRA_CSS__
-</head>
-<body>
-  __BODY__
-</body>
-</html>"""
-
-    return HTMLResponse(
-        html
-        .replace("__EXTRA_CSS__", extra_css)
-        .replace("__BODY__", scaled_body)
-    )
+@app.get("/tools/maps", response_class=HTMLResponse)
+def tools_maps_home():
+    from app.services.middkips_maps_page import render_maps_home
+    return layout("MiddKiPS Maps", render_maps_home())
 
 
+@app.get("/tools/maps/archive", response_class=HTMLResponse)
+def tools_maps_archive():
+    from app.services.middkips_maps_page import render_archived_maps_index
+    return layout("Archived Maps", render_archived_maps_index())
+
+
+@app.get("/tools/maps/mist-pods", response_class=HTMLResponse)
+def tools_maps_mist_pods():
+    from app.services.middkips_maps_page import render_mist_pod_map
+    return layout("Mist Pod Map", render_mist_pod_map())
+
+
+@app.get("/tools/maps/service-block", response_class=HTMLResponse)
+def tools_maps_service_block():
+    from app.services.middkips_maps_page import render_service_block_map
+    return layout("Service Block Map", render_service_block_map())
+
+
+@app.get("/tools/maps/legacy-datacenter", response_class=HTMLResponse)
+def tools_maps_legacy_datacenter():
+    from app.services.middkips_maps_page import render_legacy_datacenter_map
+    return layout("Legacy Datacenter Map", render_legacy_datacenter_map())
+
+
+@app.get("/tools/maps/edge", response_class=HTMLResponse)
+def tools_maps_edge():
+    from app.services.middkips_maps_page import render_edge_map
+    return layout("Edge Map", render_edge_map())
+
+
+@app.get("/tv/maps", response_class=HTMLResponse)
+def tv_maps_dashboard():
+    from app.services.middkips_maps_page import render_tv_maps_dashboard
+    return layout("TV Map Dashboard", render_tv_maps_dashboard())
 
