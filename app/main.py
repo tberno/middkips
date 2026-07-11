@@ -4046,27 +4046,59 @@ def tools_maps_archive():
 
 
 @app.get("/tools/maps/mist-pods", response_class=HTMLResponse)
-def tools_maps_mist_pods():
-    from app.services.middkips_maps_page import render_mist_pod_map
-    return layout("Mist Pod Map", render_mist_pod_map())
+def tools_maps_mist_pods(q: str = "", redundant_only: str = "0"):
+    from app.services.middkips_map_model import build_map
+    from app.services.middkips_map_renderer import render_map_page
+
+    data = build_map(map_type="mist-pods", q=q, limit=300)
+    body = render_map_page(
+        data,
+        q=q,
+        redundant_only=str(redundant_only or "0") == "1",
+    )
+    return layout("Mist Pod Map", body)
 
 
 @app.get("/tools/maps/service-block", response_class=HTMLResponse)
-def tools_maps_service_block():
-    from app.services.middkips_maps_page import render_service_block_map
-    return layout("Service Block Map", render_service_block_map())
+def tools_maps_service_block(q: str = "", redundant_only: str = "0"):
+    from app.services.middkips_map_model import build_map
+    from app.services.middkips_map_renderer import render_map_page
+
+    data = build_map(map_type="service-block", q=q, limit=300)
+    body = render_map_page(
+        data,
+        q=q,
+        redundant_only=str(redundant_only or "0") == "1",
+    )
+    return layout("Service Block Map", body)
 
 
 @app.get("/tools/maps/legacy-datacenter", response_class=HTMLResponse)
-def tools_maps_legacy_datacenter():
-    from app.services.middkips_maps_page import render_legacy_datacenter_map
-    return layout("Legacy Datacenter Map", render_legacy_datacenter_map())
+def tools_maps_legacy_datacenter(q: str = "", redundant_only: str = "0"):
+    from app.services.middkips_map_model import build_map
+    from app.services.middkips_map_renderer import render_map_page
+
+    data = build_map(map_type="legacy-datacenter", q=q, limit=300)
+    body = render_map_page(
+        data,
+        q=q,
+        redundant_only=str(redundant_only or "0") == "1",
+    )
+    return layout("Legacy Datacenter Map", body)
 
 
 @app.get("/tools/maps/edge", response_class=HTMLResponse)
-def tools_maps_edge():
-    from app.services.middkips_maps_page import render_edge_map
-    return layout("Edge Map", render_edge_map())
+def tools_maps_edge(q: str = "", redundant_only: str = "0"):
+    from app.services.middkips_map_model import build_map
+    from app.services.middkips_map_renderer import render_map_page
+
+    data = build_map(map_type="edge", q=q, limit=300)
+    body = render_map_page(
+        data,
+        q=q,
+        redundant_only=str(redundant_only or "0") == "1",
+    )
+    return layout("Edge Map", body)
 
 
 @app.get("/tv/maps", response_class=HTMLResponse)
@@ -4074,3 +4106,111 @@ def tv_maps_dashboard():
     from app.services.middkips_maps_page import render_tv_maps_dashboard
     return layout("TV Map Dashboard", render_tv_maps_dashboard())
 
+
+
+@app.get("/api/maps/{map_type}")
+def api_map_data(map_type: str, q: str = "", focus: str = "", limit: int = 300):
+    from app.services.middkips_map_model import build_map
+    return build_map(map_type=map_type, q=q, focus=focus, limit=limit)
+
+
+@app.get("/tools/maps/drilldown/device/{device_id}", response_class=HTMLResponse)
+def tools_maps_device_drilldown(device_id: int):
+    from app.services.middkips_map_model import node_detail
+
+    ctx = node_detail(device_id)
+
+    device = ctx.get("device") or {}
+    ports = ctx.get("ports") or []
+    links = ctx.get("links") or []
+
+    def val(x):
+        return h(str(x or ""))
+
+    port_rows = "".join(
+        f"""
+        <tr>
+          <td>{val(p.get('ifName'))}</td>
+          <td>{val(p.get('ifOperStatus'))}</td>
+          <td>{val(p.get('ifAdminStatus'))}</td>
+          <td>{val(p.get('ifSpeed'))}</td>
+          <td>{val(p.get('ifAlias'))}</td>
+        </tr>
+        """
+        for p in ports
+    ) or '<tr><td colspan="5">No ports found.</td></tr>'
+
+    link_rows = "".join(
+        f"""
+        <tr>
+          <td>{val(l.get('local_ifname') or l.get('local_ifdescr'))}</td>
+          <td>{val(l.get('remote_hostname') or l.get('remote_host') or l.get('remote_sysname'))}</td>
+          <td>{val(l.get('remote_port') or l.get('remote_ifname') or l.get('remote_port_id'))}</td>
+          <td>{val(l.get('protocol'))}</td>
+        </tr>
+        """
+        for l in links
+    ) or '<tr><td colspan="4">No links found.</td></tr>'
+
+    hostname = device.get("hostname") or device.get("sysName") or device_id
+
+    body = f"""
+<h1>Map Drilldown: {val(hostname)}</h1>
+<p class="muted">Device-level map drilldown with ports and neighbor links.</p>
+
+<div class="actions">
+  <a class="button" href="/dashboard?device_id={val(device_id)}">Open Device Dashboard</a>
+  <a class="button" href="/config/{val(hostname)}">Open Config</a>
+  <a class="button" href="/lookup?q={val(hostname)}">Universal Lookup</a>
+</div>
+
+<h2 class="section-title">Device</h2>
+<div class="table-wrap">
+<table>
+  <tbody>
+    <tr><th>Hostname</th><td>{val(hostname)}</td></tr>
+    <tr><th>IP</th><td>{val(device.get('ip'))}</td></tr>
+    <tr><th>Status</th><td>{val(device.get('status'))}</td></tr>
+    <tr><th>Hardware</th><td>{val(device.get('hardware'))}</td></tr>
+    <tr><th>OS</th><td>{val(device.get('os'))}</td></tr>
+    <tr><th>Version</th><td>{val(device.get('version'))}</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 class="section-title">Neighbor Links</h2>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>Local Interface</th>
+      <th>Remote Host</th>
+      <th>Remote Port</th>
+      <th>Protocol</th>
+    </tr>
+  </thead>
+  <tbody>
+    {link_rows}
+  </tbody>
+</table>
+</div>
+
+<h2 class="section-title">Ports</h2>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>Interface</th>
+      <th>Oper</th>
+      <th>Admin</th>
+      <th>Speed</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    {port_rows}
+  </tbody>
+</table>
+</div>
+"""
+    return layout(f"Map Drilldown - {hostname}", body)

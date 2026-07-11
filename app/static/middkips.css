@@ -307,3 +307,79 @@ nav,
     grid-template-columns: 1fr;
   }
 }
+
+/* Real map renderer */
+
+.map-summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 18px;
+}
+
+.map-group-panel {
+  border: 1px solid var(--border);
+  border-left: 5px solid var(--map-group-color);
+  border-radius: 14px;
+  padding: 14px;
+  margin: 18px 0;
+  background: var(--panel);
+  box-shadow: 0 0 18px rgba(0, 0, 0, 0.18);
+}
+
+.map-group-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.map-group-header h2 {
+  margin: 0;
+}
+
+.map-node-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+  gap: 12px;
+}
+
+.map-node-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  min-width: 0;
+}
+
+.map-node-card h3 {
+  margin: 0;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.map-node-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.map-link-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.map-link-list li {
+  margin: 4px 0;
+}
+
+.compact-actions {
+  margin-top: 10px;
+}
+
+.compact-actions .button {
+  padding: 5px 9px;
+  font-size: 0.85rem;
+}

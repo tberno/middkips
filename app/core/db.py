@@ -40,3 +40,12 @@ def fetch_one(sql, params=None):
         with conn.cursor() as cur:
             cur.execute(sql, params or ())
             return cur.fetchone()
+
+
+
+def db_query(sql, params=None):
+    """
+    Compatibility alias for older/new service modules.
+    Prefer fetch_all() in new code.
+    """
+    return fetch_all(sql, params)
