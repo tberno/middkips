@@ -4261,8 +4261,8 @@ def tools_fabric_links_flow():
 
 @app.get("/tools/network-flow", response_class=HTMLResponse)
 def tools_network_flow_home():
-    from app.services.middkips_network_flow_page import render_network_flow_home
-    return layout("Network Flow Modules", render_network_flow_home())
+    from app.services.middkips_site_flow_page import render_site_flow_home
+    return layout("Network Flow Modules", render_site_flow_home())
 
 
 @app.get("/tools/network-flow/mist", response_class=HTMLResponse)
@@ -4288,14 +4288,20 @@ def tools_network_flow_edge(edit: str = "0"):
 
 @app.get("/tools/network-flow/datacenter", response_class=HTMLResponse)
 def tools_network_flow_datacenter(edit: str = "0"):
-    from app.services.middkips_network_flow_page import render_module_flow
-    return layout("Old Datacenter Flow", render_module_flow("datacenter", editable=str(edit) == "1"))
+    from app.services.middkips_site_flow_page import render_site_flow
+    return layout(
+        "Old Datacenter Flow",
+        render_site_flow("datacenter", editable=str(edit) == "1"),
+    )
 
 
 @app.get("/tools/network-flow/hci", response_class=HTMLResponse)
 def tools_network_flow_hci(edit: str = "0"):
-    from app.services.middkips_network_flow_page import render_module_flow
-    return layout("HCI / DC Cluster Flow", render_module_flow("hci", editable=str(edit) == "1"))
+    from app.services.middkips_site_flow_page import render_site_flow
+    return layout(
+        "HCI Cluster Flow",
+        render_site_flow("hci", editable=str(edit) == "1"),
+    )
 
 
 @app.get("/tv/network-flow", response_class=HTMLResponse)
@@ -4330,3 +4336,54 @@ def api_network_flow_edge():
 def api_network_flow_edge_problems():
     from app.services.middkips_edge_flow_page import edge_flow_problems
     return edge_flow_problems()
+
+
+@app.get("/tools/network-flow/washington", response_class=HTMLResponse)
+def tools_network_flow_washington(edit: str = "0"):
+    from app.services.middkips_site_flow_page import render_site_flow
+    return layout(
+        "Washington DC Flow",
+        render_site_flow("washington", editable=str(edit) == "1"),
+    )
+
+
+@app.get("/tools/network-flow/monterey", response_class=HTMLResponse)
+def tools_network_flow_monterey(edit: str = "0"):
+    from app.services.middkips_site_flow_page import render_site_flow
+    return layout(
+        "Monterey Flow",
+        render_site_flow("monterey", editable=str(edit) == "1"),
+    )
+
+
+@app.get("/api/network-flow/site/{module}")
+def api_network_flow_site(module: str):
+    from fastapi import HTTPException
+    from app.services.middkips_site_flow_page import SITE_SPECS, site_flow_data
+
+    if module not in SITE_SPECS:
+        raise HTTPException(status_code=404, detail="Unknown site-flow module")
+
+    return site_flow_data(module)
+
+
+@app.get("/api/network-flow/site/{module}/problems")
+def api_network_flow_site_problems(module: str):
+    from fastapi import HTTPException
+    from app.services.middkips_site_flow_page import SITE_SPECS, site_flow_problems
+
+    if module not in SITE_SPECS:
+        raise HTTPException(status_code=404, detail="Unknown site-flow module")
+
+    return site_flow_problems(module)
+
+
+@app.get("/tv/network-flow/{module}", response_class=HTMLResponse)
+def tv_network_flow_site(module: str):
+    from fastapi import HTTPException
+    from app.services.middkips_site_flow_page import SITE_SPECS, render_site_flow
+
+    if module not in SITE_SPECS:
+        raise HTTPException(status_code=404, detail="Unknown site-flow module")
+
+    return HTMLResponse(render_site_flow(module, editable=False, tv=True))

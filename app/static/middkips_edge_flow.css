@@ -726,3 +726,202 @@
 }
 
 /* END EDGE EVEN SPACING V2 */
+
+
+/* BEGIN LIVE EDGE TRAFFIC */
+
+.ef-traffic-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.2rem 0 0.65rem;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.ef-traffic-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.ef-traffic-legend b {
+  display: inline-block;
+  width: 28px;
+  height: 0;
+  border-top: 3px solid;
+}
+
+.ef-legend-forward { border-color: #22d3ee !important; }
+.ef-legend-reverse { border-color: #c084fc !important; }
+.ef-legend-down { border-color: #ef4444 !important; }
+.ef-legend-missing {
+  border-color: #ef4444 !important;
+  border-top-style: dashed !important;
+}
+.ef-legend-stale {
+  border-color: #f59e0b !important;
+  border-top-style: dashed !important;
+}
+
+.ef-link-stale {
+  stroke: #f59e0b !important;
+  stroke-width: 4 !important;
+  stroke-dasharray: 8 5 !important;
+  opacity: 0.95 !important;
+}
+
+.ef-traffic {
+  fill: none;
+  pointer-events: stroke;
+  stroke-linecap: round;
+  stroke-dasharray: 2 16;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.95;
+  animation: ef-live-flow var(--ef-traffic-duration, 3s) linear infinite;
+}
+
+.ef-traffic-forward {
+  stroke: #22d3ee;
+}
+
+.ef-traffic-reverse {
+  stroke: #c084fc;
+  animation-direction: reverse;
+}
+
+@keyframes ef-live-flow {
+  to {
+    stroke-dashoffset: -72;
+  }
+}
+
+.ef-live-direction {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.45rem;
+  align-items: center;
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  border-radius: 12px;
+  padding: 0.55rem;
+  margin: 0.5rem 0;
+  background: rgba(8, 47, 73, 0.22);
+}
+
+.ef-live-direction > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ef-live-direction > span {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #67e8f9;
+}
+
+.ef-live-direction > small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+
+.ef-live-reverse {
+  border-color: rgba(192, 132, 252, 0.3);
+  background: rgba(88, 28, 135, 0.18);
+}
+
+.ef-live-reverse > span {
+  color: #d8b4fe;
+}
+
+.ef-live-warning {
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  border-radius: 10px;
+  padding: 0.45rem 0.55rem;
+  color: #fde68a !important;
+  background: rgba(120, 53, 15, 0.2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ef-traffic {
+    animation: none;
+  }
+}
+
+/* END LIVE EDGE TRAFFIC */
+
+
+/* BEGIN GENERIC SITE FLOW MODULES */
+
+.ef-site-page .ef-viewport {
+  min-height: calc(100vh - 225px);
+}
+
+.ef-site-zone {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  box-sizing: border-box;
+  border: 1px solid rgba(96, 165, 250, 0.13);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.045), rgba(2, 6, 23, 0.02));
+  pointer-events: none;
+  z-index: 0;
+}
+
+.ef-site-zone span {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  color: rgba(191, 219, 254, 0.82);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.ef-role-aggregation,
+.ef-role-access,
+.ef-role-fabric,
+.ef-role-storage,
+.ef-role-management,
+.ef-role-router,
+.ef-role-unknown {
+  background: rgba(2, 6, 23, 0.86);
+}
+
+.ef-role-aggregation { border-color: rgba(56, 189, 248, 0.72); }
+.ef-role-access { border-color: rgba(96, 165, 250, 0.56); }
+.ef-role-fabric { border-color: rgba(34, 211, 238, 0.72); }
+.ef-role-storage { border-color: rgba(168, 85, 247, 0.68); }
+.ef-role-management { border-color: rgba(148, 163, 184, 0.58); }
+.ef-role-router { border-color: rgba(250, 204, 21, 0.67); }
+.ef-role-unknown { border-color: rgba(245, 158, 11, 0.55); }
+
+.ef-site-page .ef-link { stroke: #60a5fa; }
+.ef-link-role-core-fabric,
+.ef-link-role-core-link { stroke: #60a5fa; }
+.ef-link-role-aggregation-access { stroke: #38bdf8; }
+.ef-link-role-fabric-storage { stroke: #a855f7; }
+.ef-link-role-fabric-interconnect { stroke: #22d3ee; stroke-width: 4; }
+.ef-link-role-aggregation-interconnect { stroke: #2dd4bf; stroke-width: 4; }
+.ef-link-role-firewall-link { stroke: #f472b6; }
+.ef-link-role-management { stroke: #64748b; stroke-dasharray: 6 5; }
+
+.ef-tv-mode {
+  padding: 0;
+  background: #07101f;
+}
+
+.ef-tv-mode .ef-summary,
+.ef-tv-mode .ef-refresh-state {
+  display: none;
+}
+
+.ef-tv-mode .ef-viewport {
+  min-height: 100vh;
+  height: 100vh;
+  border-radius: 0;
+  border: 0;
+}
+
+/* END GENERIC SITE FLOW MODULES */

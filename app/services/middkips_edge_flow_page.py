@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import defaultdict
 from html import escape
 from typing import Any
 
 from app.core.db import fetch_all
+from app.services.middkips_live_link_metrics import enrich_links_with_live_metrics, librenms_bgp_peer_health, apply_provider_health
 
 
 EDGE_NODE_SPECS: dict[str, dict[str, Any]] = {
@@ -460,6 +462,44 @@ def _worst_status(statuses: list[str]) -> str:
     return max(statuses, key=_status_rank)
 
 
+
+
+def _edge_provider_ips_from_link(link):
+    """
+    Provider links currently arrive from expected-link rows with peer/local IPs
+    embedded in display port strings. Convert those into structured fields so
+    BGP provider health can use them.
+    """
+    text = " ".join(str(link.get(k) or "") for k in (
+        "source_port",
+        "target_port",
+        "label",
+        "id",
+    ))
+
+    if not link.get("peer_ip"):
+        match = re.search(r"\bpeer\s+(\d{1,3}(?:\.\d{1,3}){3})\b", text, re.I)
+        if match:
+            link["peer_ip"] = match.group(1)
+
+    if not link.get("local_ip"):
+        match = re.search(r"\blocal\s+(\d{1,3}(?:\.\d{1,3}){3})\b", text, re.I)
+        if match:
+            link["local_ip"] = match.group(1)
+
+    if not link.get("provider"):
+        source = str(link.get("source") or "")
+        target = str(link.get("target") or "")
+
+        for value in (source, target):
+            if value.startswith("provider-"):
+                link["provider"] = value
+                link["provider_name"] = value.replace("provider-", "").replace("-", " ").title()
+                break
+
+    return link
+
+
 def edge_flow_data() -> dict[str, Any]:
     resolved = resolve_edge_devices()
     positions = load_edge_positions()
@@ -518,6 +558,7 @@ def edge_flow_data() -> dict[str, Any]:
         for index, link in enumerate(group):
             link["parallel_index"] = index
             link["parallel_total"] = total
+
 
     links_by_node: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
@@ -659,6 +700,33 @@ def edge_flow_data() -> dict[str, Any]:
         if link["status"] in ("down", "missing")
     ]
 
+    # Enrich after nodes and links are fully built. Earlier placement crashes because nodes is undefined.
+    links = enrich_links_with_live_metrics(links, nodes)
+
+    # Provider links need more than interface state. A provider can keep the
+    # handoff up while BGP is down, so enrich provider links with LibreNMS BGP.
+    node_by_id = {str(n.get("id")): n for n in nodes}
+    for link in links:
+        _edge_provider_ips_from_link(link)
+
+        peer_ip = link.get("peer_ip")
+        if not peer_ip:
+            continue
+
+        router_id = link.get("target") or link.get("source")
+        router = node_by_id.get(str(router_id), {})
+        router_name = (
+            router.get("device")
+            or router.get("label")
+            or router.get("id")
+            or router_id
+        )
+
+        bgp = librenms_bgp_peer_health(router_name, peer_ip)
+        link.update(bgp)
+        apply_provider_health(link)
+
+
     return {
         "module": "edge",
         "canvas": dict(EDGE_CANVAS),
@@ -690,7 +758,7 @@ def render_edge_flow(editable: bool = False) -> str:
     """
 
     return f"""
-<link rel="stylesheet" href="/static/middkips_edge_flow.css?v=20260711-4">
+<link rel="stylesheet" href="/static/middkips_edge_flow.css?v=20260712-live1">
 
 <div
   class="ef-page"
@@ -711,6 +779,7 @@ def render_edge_flow(editable: bool = False) -> str:
       <button class="button" id="ef-zoom-out">-</button>
       <button class="button" id="ef-zoom-in">+</button>
       <button class="button" id="ef-refresh">Refresh</button>
+      <button class="button" id="ef-traffic-toggle">Traffic On</button>
       {edit_controls}
     </div>
   </header>
@@ -727,6 +796,14 @@ def render_edge_flow(editable: bool = False) -> str:
 
   <div class="ef-refresh-state">
     <span id="ef-refresh-state">Loading edge state...</span>
+  </div>
+
+  <div class="ef-traffic-legend">
+    <span><b class="ef-legend-forward"></b>A to B traffic</span>
+    <span><b class="ef-legend-reverse"></b>B to A traffic</span>
+    <span><b class="ef-legend-down"></b>Down</span>
+    <span><b class="ef-legend-missing"></b>Missing</span>
+    <span><b class="ef-legend-stale"></b>Stale telemetry</span>
   </div>
 
   <div class="ef-layout">
@@ -749,5 +826,5 @@ def render_edge_flow(editable: bool = False) -> str:
 </div>
 
 <script id="ef-data" type="application/json">{payload}</script>
-<script src="/static/middkips_edge_flow.js?v=20260711-4"></script>
+<script src="/static/middkips_edge_flow.js?v=20260712-live1"></script>
 """
