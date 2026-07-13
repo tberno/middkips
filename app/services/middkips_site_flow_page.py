@@ -26,7 +26,6 @@ SITE_SPECS: dict[str, dict[str, Any]] = {
             "700es",
             "aggregation-",
             "dc-fw",
-            "cat-door-dc",
             "dc-mgmt",
             "dfl-core",
             "vtr-core",
@@ -42,6 +41,7 @@ SITE_SPECS: dict[str, dict[str, Any]] = {
             "core",
             "firewall",
             "aggregation",
+            "storage",
             "access",
             "management",
             "unknown",
@@ -50,6 +50,7 @@ SITE_SPECS: dict[str, dict[str, Any]] = {
             ("core", ["dfl-core", "vtr-core"]),
             ("firewall", ["dc-fw"]),
             ("aggregation", ["aggregation-", "racktop"]),
+            ("storage", ["storage"]),
             ("access", ["700es", "dc-access"]),
             ("management", ["mgmt", "cat-door"]),
         ],
@@ -110,7 +111,17 @@ SITE_SPECS: dict[str, dict[str, Any]] = {
             "Initial Washington DC topology discovered from LibreNMS names "
             "and current xDP links."
         ),
-        "patterns": ["washington", "wash-", "washdc", "wash-dc", "wdc-"],
+        "patterns": [
+            "washington",
+            "washingtondc",
+            "wash-",
+            "washdc",
+            "wash-dc",
+            "wdc-",
+            "1400 k st",
+            "amc08",
+            "dc-fw1",
+        ],
         "zones": ["Washington DC"],
         "zone_rules": [],
         "default_zone": "Washington DC",
@@ -118,6 +129,7 @@ SITE_SPECS: dict[str, dict[str, Any]] = {
             "router",
             "firewall",
             "aggregation",
+            "storage",
             "access",
             "management",
             "unknown",
@@ -147,6 +159,7 @@ SITE_SPECS: dict[str, dict[str, Any]] = {
             "router",
             "firewall",
             "aggregation",
+            "storage",
             "access",
             "management",
             "unknown",
@@ -180,6 +193,40 @@ def slug(value: Any) -> str:
     return text.strip("-") or "node"
 
 
+
+SUPPORT_DEVICE_PATTERNS = (
+    "ups-",
+    "apcups",
+    "cat-door",
+    "opengear",
+    "acm700",
+    "-vip",
+    ".vip.",
+)
+
+
+def is_support_device_name(value: Any) -> bool:
+    value = norm(value)
+    return any(pattern in value for pattern in SUPPORT_DEVICE_PATTERNS)
+
+
+def should_skip_site_device(module: str, row: dict[str, Any]) -> bool:
+    text = site_search_text(row)
+    name = norm(row.get("hostname") or row.get("sysName") or row.get("display") or "")
+
+    if module in ("washington", "monterey") and is_support_device_name(text):
+        return True
+
+    if module == "datacenter" and (
+        "cat-door" in text
+        or "apcups" in text
+        or "ups-" in text
+    ):
+        return True
+
+    return False
+
+
 def get_site_spec(module: str) -> dict[str, Any]:
     if module not in SITE_SPECS:
         raise KeyError(module)
@@ -209,6 +256,8 @@ def site_search_text(row: dict[str, Any]) -> str:
             "os",
             "type",
             "purpose",
+            "location",
+            "location_name",
         )
     )
 
@@ -267,6 +316,8 @@ def discover_site_devices(module: str) -> list[dict[str, Any]]:
         text = site_search_text(row)
         if not contains_any(text, spec["patterns"]):
             continue
+        if should_skip_site_device(module, row):
+            continue
 
         item = dict(row)
         item["_site_name"] = device_name(item)
@@ -275,6 +326,32 @@ def discover_site_devices(module: str) -> list[dict[str, Any]]:
         out.append(item)
 
     return out
+
+
+
+def should_skip_site_endpoint(module: str, value: Any) -> bool:
+    name = norm(value)
+
+    if module in ("washington", "monterey") and is_support_device_name(name):
+        return True
+
+    if module == "datacenter" and (
+        "cat-door" in name
+        or "apcups" in name
+        or "ups-" in name
+    ):
+        return True
+
+    return False
+
+
+def should_skip_site_link(module: str, link: dict[str, Any]) -> bool:
+    local_device = link.get("local_device") or link.get("source") or ""
+    remote_device = link.get("remote_device") or link.get("target") or ""
+    return (
+        should_skip_site_endpoint(module, local_device)
+        or should_skip_site_endpoint(module, remote_device)
+    )
 
 
 def ensure_position_table() -> None:
@@ -467,6 +544,8 @@ def site_flow_data(module: str) -> dict[str, Any]:
     }
 
     for link in expected_rows:
+        if should_skip_site_link(module, link):
+            continue
         for endpoint in (
             clean(link.get("local_device")),
             clean(link.get("remote_device")),
@@ -516,6 +595,8 @@ def site_flow_data(module: str) -> dict[str, Any]:
     links: list[dict[str, Any]] = []
 
     for row in expected_rows:
+        if should_skip_site_link(module, row):
+            continue
         source = name_to_node_id.get(norm(row.get("local_device")))
         target = name_to_node_id.get(norm(row.get("remote_device")))
 
